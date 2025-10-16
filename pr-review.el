@@ -167,6 +167,7 @@ Which means that all sections are collapsed."
     (if section-id
         (pr-review--goto-section-with-value section-id)
       (goto-char (point-min)))
+    (magit-map-sections 'magit-section-maybe-update-visibility-indicator)
     (apply #'message "PR %s/%s/%s loaded" pr-review--pr-path)))
 
 (defun pr-review-refresh (&optional clear-pending-reviews)
