@@ -85,5 +85,53 @@
   (agent-review-git--call repo-root "diff" "--no-color" "--no-ext-diff" "--unified=3"
                           (format "%s..HEAD" base-ref)))
 
+(defun agent-review-git-commit-headlines (repo-root base-ref)
+  "Return commit headlines in BASE-REF..HEAD for REPO-ROOT.
+Each entry is an alist with keys `short' and `subject'."
+  (mapcar
+   (lambda (line)
+     (pcase-let ((`(,short ,subject)
+                  (split-string line "\t" t)))
+       `((short . ,short)
+         (subject . ,subject))))
+   (agent-review-git--lines repo-root "log" "--format=%h%x09%s"
+                            (format "%s..HEAD" base-ref))))
+
+(defun agent-review-git-changed-files (repo-root base-ref)
+  "Return changed files in BASE-REF..HEAD for REPO-ROOT.
+Each entry is an alist with keys `status' and `path'."
+  (mapcar
+   (lambda (line)
+     (let* ((parts (split-string line "\t"))
+            (status (car parts))
+            (path (cond
+                   ((and (string-prefix-p "R" status) (= (length parts) 3))
+                    (format "%s -> %s" (nth 1 parts) (nth 2 parts)))
+                   ((>= (length parts) 2)
+                    (nth 1 parts))
+                   (t (or (cadr parts) "")))))
+       `((status . ,status)
+         (path . ,path))))
+   (agent-review-git--lines repo-root "diff" "--name-status" "--no-color"
+                            (format "%s..HEAD" base-ref))))
+
+(defun agent-review-git-diff-summary (repo-root base-ref)
+  "Return diff summary counts in BASE-REF..HEAD for REPO-ROOT."
+  (let ((files 0)
+        (additions 0)
+        (deletions 0))
+    (dolist (line (agent-review-git--lines repo-root "diff" "--numstat" "--no-color"
+                                           (format "%s..HEAD" base-ref)))
+      (pcase-let* ((`(,additions-str ,deletions-str . ,_) (split-string line "\t"))
+                   (binary-file (or (equal additions-str "-")
+                                    (equal deletions-str "-"))))
+        (setq files (1+ files))
+        (unless binary-file
+          (setq additions (+ additions (string-to-number additions-str))
+                deletions (+ deletions (string-to-number deletions-str))))))
+    `((files . ,files)
+      (additions . ,additions)
+      (deletions . ,deletions))))
+
 (provide 'agent-review-git)
 ;;; agent-review-git.el ends here
