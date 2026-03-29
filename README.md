@@ -36,9 +36,11 @@ Comments, replies, and thread state changes are persisted immediately.
 - `C-c C-r`: refresh the current review from git and disk
 - `C-c C-c`: reply when point is on a thread, or create a new thread when point is on a diff line
 - `C-c C-s`: toggle the thread at point between `open` and `resolved`
+- `C-c C-m`: remap stale anchors against the current `base..HEAD` diff
 
 ## Workflow Notes
 
 - Start from the branch you want to review.
 - Use `Continue` to resume an existing local review.
 - Use `Replace` to create a fresh review against a new base ref while keeping a new review record on disk.
+- Run `agent-review-remap-anchors` after the branch moves forward to update stale thread anchors or mark them outdated.

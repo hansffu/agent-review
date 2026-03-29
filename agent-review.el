@@ -18,6 +18,7 @@
     (define-key map (kbd "C-c C-r") #'agent-review-refresh)
     (define-key map (kbd "C-c C-c") #'agent-review-context-comment)
     (define-key map (kbd "C-c C-s") #'agent-review-toggle-thread-state)
+    (define-key map (kbd "C-c C-m") #'agent-review-remap-anchors)
     map)
   "Keymap for `agent-review-mode'.")
 
@@ -41,6 +42,18 @@
             (created_at . ,(agent-review--now)))
           extra))
 
+(defun agent-review--alist-set (alist key value)
+  "Set KEY in ALIST to VALUE and return ALIST."
+  (let ((cell (assoc key alist)))
+    (if cell
+        (setcdr cell value)
+      (setq alist (append alist (list (cons key value)))))
+    alist))
+
+(defun agent-review--alist-delete (alist key)
+  "Delete KEY from ALIST."
+  (assq-delete-all key alist))
+
 (defun agent-review--property-at-point (property)
   "Return PROPERTY around point."
   (or (get-text-property (point) property)
@@ -51,9 +64,13 @@
   "Return a summary string for THREAD."
   (let* ((anchor (alist-get 'anchor thread))
          (messages (alist-get 'messages thread))
-         (latest (car (last messages))))
-    (format "[%s] %s:%s %s"
+         (latest (car (last messages)))
+         (status (alist-get 'anchor_status thread)))
+    (format "[%s%s] %s:%s %s"
             (alist-get 'state thread)
+            (if (and status (not (equal status "active")))
+                (format "/%s" status)
+              "")
             (alist-get 'path anchor)
             (alist-get 'line anchor)
             (replace-regexp-in-string
@@ -99,6 +116,138 @@
     (side . ,side)
     (line . ,line)
     (diff_hunk . ,diff-hunk)))
+
+(defun agent-review--collect-diff-anchors (diff-text base-commit head-commit)
+  "Collect anchor candidates from DIFF-TEXT using BASE-COMMIT and HEAD-COMMIT."
+  (let ((old-path nil)
+        (new-path nil)
+        (old-line 0)
+        (new-line 0)
+        (diff-hunk nil)
+        (anchors nil))
+    (dolist (line (split-string diff-text "\n"))
+      (cond
+       ((string-match "^diff --git a/\\(.+\\) b/\\(.+\\)$" line)
+        (setq old-path (match-string 1 line)
+              new-path (match-string 2 line)
+              diff-hunk nil))
+       ((string-prefix-p "--- /dev/null" line)
+        (setq old-path nil))
+       ((string-prefix-p "+++ /dev/null" line)
+        (setq new-path nil))
+       ((string-prefix-p "--- a/" line)
+        (setq old-path (substring line 6)))
+       ((string-prefix-p "+++ b/" line)
+        (setq new-path (substring line 6)))
+       ((string-prefix-p "@@ " line)
+        (pcase-let ((`(,old ,new) (agent-review--parse-hunk-header line)))
+          (setq old-line old
+                new-line new
+                diff-hunk line)))
+       ((and (or new-path old-path) diff-hunk
+             (string-prefix-p "+" line)
+             (not (string-prefix-p "+++" line)))
+        (push `((base_commit . ,base-commit)
+                (head_commit . ,head-commit)
+                (path . ,(or new-path old-path))
+                (side . "RIGHT")
+                (line . ,new-line)
+                (diff_hunk . ,diff-hunk))
+              anchors)
+        (setq new-line (1+ new-line)))
+       ((and (or old-path new-path) diff-hunk
+             (string-prefix-p "-" line)
+             (not (string-prefix-p "---" line)))
+        (push `((base_commit . ,base-commit)
+                (head_commit . ,head-commit)
+                (path . ,(or old-path new-path))
+                (side . "LEFT")
+                (line . ,old-line)
+                (diff_hunk . ,diff-hunk))
+              anchors)
+        (setq old-line (1+ old-line)))
+       ((and (or new-path old-path) diff-hunk (string-prefix-p " " line))
+        (push `((base_commit . ,base-commit)
+                (head_commit . ,head-commit)
+                (path . ,(or new-path old-path))
+                (side . "RIGHT")
+                (line . ,new-line)
+                (diff_hunk . ,diff-hunk))
+              anchors)
+        (setq old-line (1+ old-line)
+              new-line (1+ new-line)))))
+    (nreverse anchors)))
+
+(defun agent-review--find-remap-candidate (anchor candidates)
+  "Find the best remap candidate for ANCHOR from CANDIDATES."
+  (let* ((same-side (seq-filter
+                     (lambda (candidate)
+                       (equal (alist-get 'side candidate) (alist-get 'side anchor)))
+                     candidates))
+         (hunk-match (seq-find
+                      (lambda (candidate)
+                        (and (equal (alist-get 'diff_hunk candidate) (alist-get 'diff_hunk anchor))
+                             (equal (alist-get 'path candidate) (alist-get 'path anchor))))
+                      same-side))
+         (line-match (seq-find
+                      (lambda (candidate)
+                        (and (equal (alist-get 'path candidate) (alist-get 'path anchor))
+                             (equal (alist-get 'line candidate) (alist-get 'line anchor))))
+                      same-side))
+         (nearest (car (sort
+                        (seq-filter
+                         (lambda (candidate)
+                           (equal (alist-get 'path candidate) (alist-get 'path anchor)))
+                         same-side)
+                        (lambda (left right)
+                          (< (abs (- (alist-get 'line left) (alist-get 'line anchor)))
+                             (abs (- (alist-get 'line right) (alist-get 'line anchor)))))))))
+    (cond
+     (hunk-match (cons "diff_hunk" hunk-match))
+     (line-match (cons "line" line-match))
+     (nearest (cons "nearest_line" nearest))
+     (t nil))))
+
+(defun agent-review--remap-thread (thread candidates current-head timestamp)
+  "Remap THREAD using CANDIDATES to CURRENT-HEAD at TIMESTAMP."
+  (let* ((anchor (copy-tree (alist-get 'anchor thread)))
+         (history (copy-sequence (alist-get 'remap_history thread)))
+         (match (agent-review--find-remap-candidate anchor candidates)))
+    (if match
+        (let* ((method (car match))
+               (candidate (cdr match))
+               (updated-anchor (copy-tree anchor)))
+          (setq updated-anchor (agent-review--alist-set updated-anchor 'head_commit current-head))
+          (setq updated-anchor (agent-review--alist-set updated-anchor 'path (alist-get 'path candidate)))
+          (setq updated-anchor (agent-review--alist-set updated-anchor 'side (alist-get 'side candidate)))
+          (setq updated-anchor (agent-review--alist-set updated-anchor 'line (alist-get 'line candidate)))
+          (setq updated-anchor (agent-review--alist-set updated-anchor 'diff_hunk
+                                                        (alist-get 'diff_hunk candidate)))
+          (if-let ((start-line (alist-get 'start_line candidate)))
+              (setq updated-anchor (agent-review--alist-set updated-anchor 'start_line start-line))
+            (setq updated-anchor (agent-review--alist-delete updated-anchor 'start_line)))
+          (setq thread (agent-review--alist-set thread 'anchor updated-anchor))
+          (setq thread (agent-review--alist-set thread 'anchor_status "remapped"))
+          (setq thread
+                (agent-review--alist-set
+                 thread 'remap_history
+                 (append history
+                         (list `((timestamp . ,timestamp)
+                                 (result . "remapped")
+                                 (method . ,method)
+                                 (from_anchor . ,anchor)
+                                 (to_anchor . ,(copy-tree updated-anchor)))))))
+          thread)
+      (setq thread (agent-review--alist-set thread 'anchor_status "outdated"))
+      (setq thread
+            (agent-review--alist-set
+             thread 'remap_history
+             (append history
+                     (list `((timestamp . ,timestamp)
+                             (result . "outdated")
+                             (method . "none")
+                             (from_anchor . ,anchor))))))
+      thread)))
 
 (defun agent-review--insert-diff (diff-text)
   "Insert DIFF-TEXT and annotate diff lines."
@@ -336,6 +485,41 @@
       (setq agent-review--review
             (agent-review-store-set-thread-state agent-review--review thread-id next-state))
       (agent-review--persist-and-rerender thread-id))))
+
+(defun agent-review-remap-anchors ()
+  "Remap stale thread anchors against the current diff."
+  (interactive)
+  (unless agent-review--review-file
+    (user-error "No review is active in this buffer"))
+  (let* ((repo-root (alist-get 'repo_root agent-review--review))
+         (timestamp (agent-review--now))
+         (review (agent-review--refresh-review-state
+                  (agent-review-store-read agent-review--review-file)
+                  repo-root))
+         (current-head (alist-get 'head_ref review))
+         (base-commit (agent-review-git-rev-parse repo-root (alist-get 'base_ref review)))
+         (diff-text (agent-review-git-unified-diff repo-root (alist-get 'base_ref review)))
+         (candidates (agent-review--collect-diff-anchors diff-text base-commit current-head))
+         (remapped 0)
+         (outdated 0))
+    (setq review
+          (agent-review--alist-set
+           review 'threads
+           (mapcar
+            (lambda (thread)
+              (let ((anchor (alist-get 'anchor thread)))
+                (if (equal (alist-get 'head_commit anchor) current-head)
+                    thread
+                  (let ((updated (agent-review--remap-thread thread candidates current-head timestamp)))
+                    (pcase (alist-get 'anchor_status updated)
+                      ("remapped" (setq remapped (1+ remapped)))
+                      ("outdated" (setq outdated (1+ outdated))))
+                    updated))))
+            (alist-get 'threads review))))
+    (setq agent-review--review review
+          agent-review--diff-text diff-text)
+    (agent-review--persist-and-rerender)
+    (message "Remapped %d threads; marked %d outdated" remapped outdated)))
 
 (provide 'agent-review)
 ;;; agent-review.el ends here
