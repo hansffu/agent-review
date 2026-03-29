@@ -5,11 +5,11 @@ Status: Approved (brainstorming)
 
 ## Summary
 
-Turn `emacs-pr-review` into a fully offline package named `agent-review` for reviewing local branch changes (typically current branch vs `main`/`master`), persisting review conversations to a local file, and enabling agent-driven follow-up using explicit skills for Codex and Claude.
+Turn `emacs-agent-review` into a fully offline package named `agent-review` for reviewing local branch changes (typically current branch vs `main`/`master`), persisting review conversations to a local file, and enabling agent-driven follow-up using explicit skills for Codex and Claude.
 
 ## Goals
 
-1. Rename package and user-facing commands from `pr-review` to `agent-review`.
+1. Rename package and user-facing commands from `agent-review` to `agent-review`.
 2. Remove all provider/network integrations (GitHub, GraphQL, notifications, search, subscriptions, reviewer requests).
 3. Persist review comments to disk in a per-branch review file.
 4. Support session resume by loading the existing review file with prior comments.
@@ -65,11 +65,11 @@ Planned modules:
 4. `agent-review-adapter.el`
    - Converts git/store data into render/action-ready objects.
 5. Existing render/action/input modules
-   - Renamed and adapted from `pr-review-*` to `agent-review-*`.
+   - Renamed and adapted from `agent-review-*` to `agent-review-*`.
 
 Remove entirely:
 
-1. Provider API layer (`pr-review-api.el` equivalent).
+1. Provider API layer (`agent-review-api.el` equivalent).
 2. GraphQL assets under `graphql/`.
 3. Notification/search/provider-specific actions and entrypoints.
 

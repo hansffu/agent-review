@@ -9,7 +9,7 @@ Review Github Pull Request from Emacs!
 
 ### Install
 
-[![](https://melpa.org/packages/pr-review-badge.svg)](https://melpa.org/#/pr-review)
+[![](https://melpa.org/packages/agent-review-badge.svg)](https://melpa.org/#/agent-review)
 
 ### Setup github token
 
@@ -19,20 +19,20 @@ see its document for more details about how to setup the token.
 Simply put, add the following line to `~/.authinfo` (replace `<...>` accordingly):
 
 ```
-machine api.github.com login <YOUR_USERNAME>^emacs-pr-review password <YOUR_GITHUB_PERSONAL_TOKEN>
+machine api.github.com login <YOUR_USERNAME>^emacs-agent-review password <YOUR_GITHUB_PERSONAL_TOKEN>
 ```
 
 You may customize username and api host (for github enterprise instances) using [ghub](https://magit.vc/manual/ghub/Github-Configuration-Variables.html#Github-Configuration-Variables),
-or you can also set `pr-review-ghub-username` and `pr-review-ghub-host` for pr-review only.
+or you can also set `agent-review-ghub-username` and `agent-review-ghub-host` for agent-review only.
 
 <details>
   <summary>For github enterprise users</summary>
   
 The detailed setup for different github enterprise sites may vary. Just for reference:
   
-  1. set pr-review-ghub-host to "github.corp.my-company.com/api/v3"
-  2. set pr-review-ghub-username
-  3. in ~/.authinfo, use `machine github.corp.my-company.com/api/v3 login my-username^emacs-pr-review password ghp_xxxxxxxxxxxx`
+  1. set agent-review-ghub-host to "github.corp.my-company.com/api/v3"
+  2. set agent-review-ghub-username
+  3. in ~/.authinfo, use `machine github.corp.my-company.com/api/v3 login my-username^emacs-agent-review password ghp_xxxxxxxxxxxx`
 
 </details>
 
@@ -40,30 +40,30 @@ The detailed setup for different github enterprise sites may vary. Just for refe
 
 This package provides the following entrypoint:
 
-- `M-x pr-review`: open a PR with given URL.
-- `M-x pr-review-notification`: list github notifications in a buffer, and open PRs from it
-- `M-x pr-review-search-open`: search in github and select a PR from search result.
-- `M-x pr-review-search`: like above, but list results in a buffer
+- `M-x agent-review`: open a PR with given URL.
+- `M-x agent-review-notification`: list github notifications in a buffer, and open PRs from it
+- `M-x agent-review-search-open`: search in github and select a PR from search result.
+- `M-x agent-review-search`: like above, but list results in a buffer
 
 Suggested config (especially for evil users):
 
 ```elisp
-(evil-ex-define-cmd "prr" #'pr-review)
-(evil-ex-define-cmd "prs" #'pr-review-search)
-(evil-ex-define-cmd "prn" #'pr-review-notification)
+(evil-ex-define-cmd "prr" #'agent-review)
+(evil-ex-define-cmd "prs" #'agent-review-search)
+(evil-ex-define-cmd "prn" #'agent-review-notification)
 (add-to-list 'browse-url-default-handlers
-             '(pr-review-url-parse . pr-review-open-url))
+             '(agent-review-url-parse . agent-review-open-url))
 ```
 
 Personally I suggest two possible workflows:
 
-1. Use `pr-review-notification` as your "dashboard" and enter PR review from it.
+1. Use `agent-review-notification` as your "dashboard" and enter PR review from it.
 2. Use [notmuch](https://notmuchmail.org/notmuch-emacs/) (or some other email client in emacs) to
-receive and read all github notification emails and start `pr-review` from the notmuch message buffer.
-Running `pr-review` in the email buffer will automatically find the PR url in the email.
+receive and read all github notification emails and start `agent-review` from the notmuch message buffer.
+Running `agent-review` in the email buffer will automatically find the PR url in the email.
 
 
-### Keybindings in PrReview buffer
+### Keybindings in AgentReview buffer
 
 There's three most-used keybindings:
 
@@ -94,22 +94,22 @@ Some other keybindings or commands:
 - `C-c C-j`: set reactions (emojis) for comment or description under current point
 - `C-c C-f`: view current file; invoke with `C-u` prefix to select head or base
 - `C-c C-d`: open current diff; invoke with `C-u` prefix to select file
-- `M-x pr-review-select-commit`: select only some commits for review
+- `M-x agent-review-select-commit`: select only some commits for review
 
 Evil users will also find some familiar keybindings. See `describe-mode` for more details.
 
-### Keybindings in PrReviewInput buffer
+### Keybindings in AgentReviewInput buffer
 
-When you are adding or editing the comment, you will be editing in a new PrReviewInput buffer.
+When you are adding or editing the comment, you will be editing in a new AgentReviewInput buffer.
 Keybindings in this buffer:
 
 - `C-c C-c`: Finish editing, confirm the content
 - `C-c C-k`: Abort, drop the content
 - `C-c @`: Mention some other (inserting `@username`)
 
-Recommend using (company-emoji)[https://github.com/dunn/company-emoji] to insert emojis in PrReviewInput buffer.
+Recommend using (company-emoji)[https://github.com/dunn/company-emoji] to insert emojis in AgentReviewInput buffer.
 
-### Keybindings in PrReviewNotification buffer
+### Keybindings in AgentReviewNotification buffer
 
 - `RET`: Open the PR (While this buffer lists all types of notifications, only Pull Requests can be opened by this package)
 - `C-c C-n` / `C-c C-p` (`gj` / `gk` for evil users): next/prev page

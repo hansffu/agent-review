@@ -1,4 +1,4 @@
-;;; pr-review-search.el --- Search PRs               -*- lexical-binding: t; -*-
+;;; agent-review-search.el --- Search PRs               -*- lexical-binding: t; -*-
 
 ;; Copyright (C) 2023  Yikai Zhao
 
@@ -24,33 +24,33 @@
 
 ;;; Code:
 
-(require 'pr-review-common)
-(require 'pr-review-listview)
-(require 'pr-review-api)
+(require 'agent-review-common)
+(require 'agent-review-listview)
+(require 'agent-review-api)
 
-(declare-function pr-review-open "pr-review")
+(declare-function agent-review-open "agent-review")
 
-(define-derived-mode pr-review-search-mode pr-review-listview-mode
-  "PrReviewSearch"
+(define-derived-mode agent-review-search-mode agent-review-listview-mode
+  "AgentReviewSearch"
   :interactive nil
-  :group 'pr-review
+  :group 'agent-review
 
-  (add-hook 'tabulated-list-revert-hook #'pr-review--search-refresh nil 'local)
-  (setq-local pr-review--listview-open-callback #'pr-review--search-open-item
+  (add-hook 'tabulated-list-revert-hook #'agent-review--search-refresh nil 'local)
+  (setq-local agent-review--listview-open-callback #'agent-review--search-open-item
               tabulated-list-use-header-line nil
               tabulated-list-padding 2))
 
-(defvar-local pr-review--search-query nil
+(defvar-local agent-review--search-query nil
   "The query string for searching.")
 
-(defun pr-review--search-open-item (item)
+(defun agent-review--search-open-item (item)
   "Open the selected ITEM."
   (let-alist item
-    (pr-review-open .repository.owner.login .repository.name .number)))
+    (agent-review-open .repository.owner.login .repository.name .number)))
 
-(defun pr-review--search-format-status (entry)
+(defun agent-review--search-format-status (entry)
   "Format status for search item ENTRY."
-  (let ((my-login (let-alist (pr-review--whoami-cached) .viewer.login))
+  (let ((my-login (let-alist (agent-review--whoami-cached) .viewer.login))
         assigned review-requested commenters)
     (let-alist entry
       (setq assigned (cl-find-if (lambda (node) (equal my-login (let-alist node .login)))
@@ -62,18 +62,18 @@
         (unless (equal login my-login)
           (push login commenters))))
     (concat (let-alist entry
-              (concat (propertize (downcase .state) 'face 'pr-review-listview-status-face) " "))
+              (concat (propertize (downcase .state) 'face 'agent-review-listview-status-face) " "))
             (when assigned
-              (propertize "assigned " 'face 'pr-review-listview-status-face))
-            (when review-requested (propertize "review_requested " 'face 'pr-review-listview-status-face))
+              (propertize "assigned " 'face 'agent-review-listview-status-face))
+            (when review-requested (propertize "review_requested " 'face 'agent-review-listview-status-face))
             (when commenters
-              (mapconcat (lambda (s) (propertize (format "%s " s) 'face 'pr-review-listview-unimportant-activity-face))
+              (mapconcat (lambda (s) (propertize (format "%s " s) 'face 'agent-review-listview-unimportant-activity-face))
                          (delete-dups (reverse commenters)) ""))
             )))
 
-(defun pr-review--search-refresh ()
+(defun agent-review--search-refresh ()
   "Refresh search buffer."
-  (unless (eq major-mode 'pr-review-search-mode)
+  (unless (eq major-mode 'agent-review-search-mode)
     (user-error "Not in search buffer"))
 
   (setq-local tabulated-list-format
@@ -81,74 +81,74 @@
                ("Author" 10 nil)
                ("Title" 85 nil)
                ("Status" 25 nil)])
-  (let* ((all-items (pr-review--search-prs pr-review--search-query))
+  (let* ((all-items (agent-review--search-prs agent-review--search-query))
          (items (seq-filter (lambda (item) (equal (alist-get '__typename item) "PullRequest")) all-items)))
     (setq-local header-line-format
                 (concat (format "Search results: %d. " (length items))
                         (unless (equal (length all-items) (length items))
                           (format "(%d non-PRs not displayed) " (- (length all-items) (length items))))
-                        (propertize (format "Query: %s" pr-review--search-query)
+                        (propertize (format "Query: %s" agent-review--search-query)
                                     'face 'font-lock-comment-face)))
     (setq-local tabulated-list-entries
                 (mapcar (lambda (item)
                           (let-alist item
                             (list item
                                   (vector
-                                   (pr-review--listview-format-time .createdAt)
+                                   (agent-review--listview-format-time .createdAt)
                                    .author.login
                                    (format "[%s] %s" .repository.nameWithOwner .title)
-                                   (pr-review--search-format-status item)
+                                   (agent-review--search-format-status item)
                                    ))))
                         items))
     (tabulated-list-init-header)
     (message (format "Search result refreshed, %d items." (length items)))))
 
-(defcustom pr-review-search-predefined-queries
+(defcustom agent-review-search-predefined-queries
   '(("is:pr archived:false author:@me is:open" . "Created")
     ("is:pr archived:false assignee:@me is:open" . "Assigned")
     ("is:pr archived:false mentions:@me is:open" . "Mentioned")
     ("is:pr archived:false review-requested:@me is:open" . "Review requests"))
-  "Predefined queries for `pr-review-search'.  List of (query . name)."
+  "Predefined queries for `agent-review-search'.  List of (query . name)."
   :type '(alist :key-type string :value-type string)
-  :group 'pr-review)
+  :group 'agent-review)
 
-(defcustom pr-review-search-default-query nil
-  "Default query for `pr-review-search-open'."
+(defcustom agent-review-search-default-query nil
+  "Default query for `agent-review-search-open'."
   :type 'string
-  :group 'pr-review)
+  :group 'agent-review)
 
 
-(defun pr-review--search-read-query ()
+(defun agent-review--search-read-query ()
   "Read query for search."
   (let ((completion-extra-properties
          (list :annotation-function
-               (lambda (q) (concat " " (alist-get q pr-review-search-predefined-queries nil nil 'equal))))))
+               (lambda (q) (concat " " (alist-get q agent-review-search-predefined-queries nil nil 'equal))))))
     (completing-read "Search GitHub> "
-                     pr-review-search-predefined-queries
+                     agent-review-search-predefined-queries
                      nil
                      nil  ;; no require-match
-                     pr-review-search-default-query)))
+                     agent-review-search-default-query)))
 
 ;;;###autoload
-(defun pr-review-search (query)
+(defun agent-review-search (query)
   "Search PRs using a custom QUERY and list result in buffer.
 See github docs for syntax of QUERY.
 When called interactively, you will be asked to enter the QUERY."
-  (interactive (list (pr-review--search-read-query)))
-  (with-current-buffer (get-buffer-create "*pr-review search*")
-    (pr-review-search-mode)
-    (setq-local pr-review--search-query query)
-    (pr-review--search-refresh)
+  (interactive (list (agent-review--search-read-query)))
+  (with-current-buffer (get-buffer-create "*agent-review search*")
+    (agent-review-search-mode)
+    (setq-local agent-review--search-query query)
+    (agent-review--search-refresh)
     (tabulated-list-print)
     (switch-to-buffer (current-buffer))))
 
 ;;;###autoload
-(defun pr-review-search-open (query)
+(defun agent-review-search-open (query)
   "Search PRs using a custom QUERY and open one of them.
 See github docs for syntax of QUERY.
 When called interactively, you will be asked to enter the QUERY."
-  (interactive (list (pr-review--search-read-query)))
-  (let* ((prs (pr-review--search-prs query))
+  (interactive (list (agent-review--search-read-query)))
+  (let* ((prs (agent-review--search-prs query))
          (prs-alist
           (mapcar
            (lambda (pr)
@@ -158,9 +158,9 @@ When called interactively, you will be asked to enter the QUERY."
            prs))
          (selected-pr (completing-read "Select:" prs-alist nil 'require-match)))
     (when-let ((selected-value (alist-get selected-pr prs-alist nil nil 'equal)))
-      (apply #'pr-review-open selected-value))))
+      (apply #'agent-review-open selected-value))))
 
 
 
-(provide 'pr-review-search)
-;;; pr-review-search.el ends here
+(provide 'agent-review-search)
+;;; agent-review-search.el ends here
