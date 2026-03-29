@@ -62,7 +62,8 @@
 
 (defun agent-review--thread-summary (thread)
   "Return a summary string for THREAD."
-  (let* ((anchor (alist-get 'anchor thread))
+  (let* ((anchor (or (alist-get 'current_anchor thread)
+                     (alist-get 'anchor thread)))
          (messages (alist-get 'messages thread))
          (latest (car (last messages)))
          (status (alist-get 'anchor_status thread)))
@@ -184,15 +185,15 @@
                      (lambda (candidate)
                        (equal (alist-get 'side candidate) (alist-get 'side anchor)))
                      candidates))
-         (hunk-match (seq-find
-                      (lambda (candidate)
-                        (and (equal (alist-get 'diff_hunk candidate) (alist-get 'diff_hunk anchor))
-                             (equal (alist-get 'path candidate) (alist-get 'path anchor))))
-                      same-side))
          (line-match (seq-find
                       (lambda (candidate)
                         (and (equal (alist-get 'path candidate) (alist-get 'path anchor))
                              (equal (alist-get 'line candidate) (alist-get 'line anchor))))
+                      same-side))
+         (hunk-match (seq-find
+                      (lambda (candidate)
+                        (and (equal (alist-get 'diff_hunk candidate) (alist-get 'diff_hunk anchor))
+                             (equal (alist-get 'path candidate) (alist-get 'path anchor))))
                       same-side))
          (nearest (car (sort
                         (seq-filter
@@ -203,8 +204,8 @@
                           (< (abs (- (alist-get 'line left) (alist-get 'line anchor)))
                              (abs (- (alist-get 'line right) (alist-get 'line anchor)))))))))
     (cond
-     (hunk-match (cons "diff_hunk" hunk-match))
      (line-match (cons "line" line-match))
+     (hunk-match (cons "diff_hunk" hunk-match))
      (nearest (cons "nearest_line" nearest))
      (t nil))))
 
@@ -226,7 +227,7 @@
           (if-let ((start-line (alist-get 'start_line candidate)))
               (setq updated-anchor (agent-review--alist-set updated-anchor 'start_line start-line))
             (setq updated-anchor (agent-review--alist-delete updated-anchor 'start_line)))
-          (setq thread (agent-review--alist-set thread 'anchor updated-anchor))
+          (setq thread (agent-review--alist-set thread 'current_anchor updated-anchor))
           (setq thread (agent-review--alist-set thread 'anchor_status "remapped"))
           (setq thread
                 (agent-review--alist-set
@@ -239,6 +240,7 @@
                                  (to_anchor . ,(copy-tree updated-anchor)))))))
           thread)
       (setq thread (agent-review--alist-set thread 'anchor_status "outdated"))
+      (setq thread (agent-review--alist-delete thread 'current_anchor))
       (setq thread
             (agent-review--alist-set
              thread 'remap_history
@@ -507,8 +509,10 @@
            review 'threads
            (mapcar
             (lambda (thread)
-              (let ((anchor (alist-get 'anchor thread)))
-                (if (equal (alist-get 'head_commit anchor) current-head)
+              (let ((anchor (alist-get 'anchor thread))
+                    (current-anchor (alist-get 'current_anchor thread)))
+                (if (or (equal (alist-get 'head_commit anchor) current-head)
+                        (equal (alist-get 'head_commit current-anchor) current-head))
                     thread
                   (let ((updated (agent-review--remap-thread thread candidates current-head timestamp)))
                     (pcase (alist-get 'anchor_status updated)
@@ -516,6 +520,15 @@
                       ("outdated" (setq outdated (1+ outdated))))
                     updated))))
             (alist-get 'threads review))))
+    (setq review
+          (agent-review--alist-set
+           review 'events
+           (append (alist-get 'events review)
+                   (list (agent-review--event
+                          "anchors_remapped"
+                          `((remapped_count . ,remapped)
+                            (outdated_count . ,outdated)
+                            (head_commit . ,current-head)))))))
     (setq agent-review--review review
           agent-review--diff-text diff-text)
     (agent-review--persist-and-rerender)

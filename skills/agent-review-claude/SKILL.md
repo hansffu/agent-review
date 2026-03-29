@@ -14,7 +14,7 @@ Use this skill when handling an offline review stored in `.agent-review/<branch>
 
 1. Locate the active branch review file.
 2. Review existing thread messages and anchor metadata.
-3. Focus on unresolved or otherwise active threads first.
+3. Use `anchor_status` for confidence and prioritization. Prefer `open` threads with active or remapped anchors before outdated ones.
 4. Ask the user for clarification in chat when needed.
 5. Append a reply entry to each addressed thread summarizing the action taken, the result, or the blocker.
 6. Preserve all prior thread history as-is.
