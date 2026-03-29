@@ -324,6 +324,26 @@
       (agent-review--insert-diff agent-review--diff-text))
     (goto-char (point-min))))
 
+(defun agent-review--recompute-thread-status (thread current-head)
+  "Recompute THREAD anchor status against CURRENT-HEAD."
+  (let ((anchor (alist-get 'anchor thread))
+        (current-anchor (alist-get 'current_anchor thread))
+        (status (alist-get 'anchor_status thread)))
+    (cond
+     ((and current-anchor
+           (equal (alist-get 'head_commit current-anchor) current-head))
+      (agent-review--alist-set
+       thread 'anchor_status
+       (if (or (null status) (equal status "active"))
+           "remapped"
+         status)))
+     ((equal (alist-get 'head_commit anchor) current-head)
+      (setq thread (agent-review--alist-delete thread 'current_anchor))
+      (agent-review--alist-set thread 'anchor_status "active"))
+     (t
+      (setq thread (agent-review--alist-delete thread 'current_anchor))
+      (agent-review--alist-set thread 'anchor_status "outdated")))))
+
 (defun agent-review--refresh-review-state (review repo-root)
   "Refresh REVIEW with current git state from REPO-ROOT."
   (let* ((repo-root (or repo-root (alist-get 'repo_root review)))
@@ -334,6 +354,10 @@
     (setf (alist-get 'head_ref review) head-ref)
     (setf (alist-get 'head_commits review) head-commits)
     (setf (alist-get 'updated_at review) (agent-review--now))
+    (setf (alist-get 'threads review)
+          (mapcar (lambda (thread)
+                    (agent-review--recompute-thread-status thread head-ref))
+                  (alist-get 'threads review)))
     review))
 
 (defun agent-review--persist-and-rerender (&optional thread-id)
