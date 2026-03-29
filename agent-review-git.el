@@ -50,10 +50,18 @@
      ((member "master" refs) "master")
      (t (car refs)))))
 
+(defun agent-review-git-untracked-files (&optional repo-root)
+  "Return list of untracked files in REPO-ROOT."
+  (let ((output (string-trim-right
+                 (agent-review-git--call repo-root "ls-files" "--others" "--exclude-standard"))))
+    (when (> (length output) 0)
+      (split-string output "\n" t))))
+
 (defun agent-review-git-has-uncommitted-changes (&optional repo-root)
   "Return non-nil if REPO-ROOT has uncommitted changes against HEAD."
   (let ((default-directory (or repo-root default-directory)))
-    (not (eq 0 (process-file "git" nil nil nil "diff" "--quiet" "HEAD")))))
+    (or (not (eq 0 (process-file "git" nil nil nil "diff" "--quiet" "HEAD")))
+        (not (null (agent-review-git-untracked-files repo-root))))))
 
 (defun agent-review-git-prompt-base-ref (&optional repo-root)
   "Prompt for a base ref in REPO-ROOT with free-form input enabled.

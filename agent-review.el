@@ -876,32 +876,33 @@
    nil
    "Continue"))
 
-(defun agent-review--create-review (repo-root branch)
-  "Create a fresh review in REPO-ROOT for BRANCH."
-  (let* ((base-ref (agent-review-git-prompt-base-ref repo-root))
-         (head-ref (agent-review-git-head-commit repo-root))
-         (head-commits (agent-review-git-commit-list repo-root base-ref))
-         (review (agent-review-store-create repo-root branch base-ref head-ref head-commits)))
-    review))
+(defun agent-review--create-review (repo-root branch base-ref)
+  "Create a fresh review in REPO-ROOT for BRANCH with BASE-REF.
+When BASE-REF is \"uncommitted\", creates an uncommitted review."
+  (if (equal base-ref "uncommitted")
+      (agent-review-store-create repo-root branch nil nil nil "uncommitted")
+    (let* ((head-ref (agent-review-git-head-commit repo-root))
+           (head-commits (agent-review-git-commit-list repo-root base-ref)))
+      (agent-review-store-create repo-root branch base-ref head-ref head-commits))))
 
-(defun agent-review--replace-review (repo-root branch previous-review)
+(defun agent-review--replace-review (repo-root branch base-ref previous-review)
   "Create a replacement review in REPO-ROOT for BRANCH from PREVIOUS-REVIEW."
-  (let ((review (agent-review--create-review repo-root branch)))
+  (let ((review (agent-review--create-review repo-root branch base-ref)))
     (setf (alist-get 'events review)
           (append (copy-tree (alist-get 'events previous-review))
                   (alist-get 'events review)
                   (list (agent-review--event "replaced"))))
     review))
 
-(defun agent-review--load-review (repo-root branch review-file)
-  "Load or create a review for REPO-ROOT, BRANCH and REVIEW-FILE."
+(defun agent-review--load-review (repo-root branch base-ref review-file)
+  "Load or create a review for REPO-ROOT, BRANCH, BASE-REF and REVIEW-FILE."
   (let ((review (if (file-exists-p review-file)
                     (let* ((existing-review (agent-review-store-read review-file))
                            (action (agent-review--prompt-existing-review-action branch)))
                       (if (equal action "Continue")
                           existing-review
-                        (agent-review--replace-review repo-root branch existing-review)))
-                  (agent-review--create-review repo-root branch))))
+                        (agent-review--replace-review repo-root branch base-ref existing-review)))
+                  (agent-review--create-review repo-root branch base-ref))))
     (setq review (agent-review--refresh-review-state review repo-root))
     (agent-review-store-write review-file review)
     review))
@@ -922,15 +923,28 @@
     (pop-to-buffer buffer)
     buffer))
 
+(defun agent-review--maybe-add-untracked (repo-root)
+  "If untracked files exist in REPO-ROOT, offer to add them."
+  (let ((untracked (agent-review-git-untracked-files repo-root)))
+    (when (and untracked
+               (y-or-n-p (format "%d untracked file(s) found. Add them? " (length untracked))))
+      (apply #'agent-review-git--call repo-root "add" untracked))))
+
 ;;;###autoload
 (defun agent-review ()
   "Open an offline review for the current git branch."
   (interactive)
   (let* ((repo-root (agent-review-git-repo-root default-directory))
          (branch (agent-review-git-current-branch repo-root))
-         (review-file (agent-review-store-review-file repo-root branch))
-         (review (agent-review--load-review repo-root branch review-file)))
-    (agent-review--open-buffer review-file review)))
+         (base-ref (agent-review-git-prompt-base-ref repo-root))
+         (uncommitted-p (equal base-ref "uncommitted")))
+    (when uncommitted-p
+      (agent-review--maybe-add-untracked repo-root))
+    (let* ((review-file (if uncommitted-p
+                            (agent-review-store-uncommitted-review-file repo-root branch)
+                          (agent-review-store-review-file repo-root branch)))
+           (review (agent-review--load-review repo-root branch base-ref review-file)))
+      (agent-review--open-buffer review-file review))))
 
 ;;;###autoload
 (defun agent-review-open (_repo-owner _repo-name _pr-id &optional _new-window _anchor _last-read-time)
