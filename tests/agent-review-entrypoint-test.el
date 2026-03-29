@@ -255,9 +255,18 @@
           (should-not (string-match-p "^PENDING:" (buffer-string)))
           (goto-char (point-min))
           (search-forward "+two")
-          (forward-line 1)
-          (should (looking-at-p "> 1 comment from @"))
+          (re-search-forward "^> 1 comment from @")
+          (beginning-of-line)
+          (let ((face (or (get-text-property (point) 'face)
+                          (get-text-property (point) 'font-lock-face))))
+            (should (agent-review-test--face-contains-p
+                     face
+                     'agent-review-in-diff-thread-title-face)))
           (should (get-text-property (point) 'agent-review-thread-id))
+          (search-forward "Reply")
+          (let* ((button (button-at (1- (point))))
+                 (face (and button (button-get button 'face))))
+            (should (agent-review-test--face-contains-p face 'agent-review-button-face)))
           (should (string-match-p "Inline review note" (buffer-string))))))))
 
 (ert-deftest agent-review-continue-marks-stale-thread-outdated ()

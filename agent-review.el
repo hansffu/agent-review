@@ -74,6 +74,11 @@
   "Face used for thread location labels."
   :group 'agent-review)
 
+(defface agent-review-thread-item-title-face
+  '((t :inherit magit-section-secondary-heading))
+  "Face used for thread heading locations."
+  :group 'agent-review)
+
 (defface agent-review-thread-body-face
   '((t :inherit default))
   "Face used for thread body summaries."
@@ -92,6 +97,31 @@
 (defface agent-review-empty-state-face
   '((t :inherit shadow))
   "Face used for empty section placeholders."
+  :group 'agent-review)
+
+(defface agent-review-in-diff-thread-title-face
+  '((t :inherit font-lock-comment-face))
+  "Face used for inline thread summary lines in the diff."
+  :group 'agent-review)
+
+(defface agent-review-in-diff-thread-body-face
+  '((t))
+  "Face used for inline thread message bodies in the diff."
+  :group 'agent-review)
+
+(defface agent-review-thread-diff-begin-face
+  '((t :underline t :extend t :inherit font-lock-comment-face))
+  "Face used for the top boundary of inline thread blocks."
+  :group 'agent-review)
+
+(defface agent-review-thread-diff-end-face
+  '((t :overline t :extend t :inherit font-lock-comment-face))
+  "Face used for the bottom boundary of inline thread blocks."
+  :group 'agent-review)
+
+(defface agent-review-button-face
+  '((t :underline t :slant italic))
+  "Face used for action buttons."
   :group 'agent-review)
 
 (defcustom agent-review-diff-font-lock-syntax 'hunk-also
@@ -313,7 +343,7 @@
     (insert "] ")
     (let ((location-start (point)))
       (insert location)
-      (add-face-text-property location-start (point) 'agent-review-thread-location-face))
+      (add-face-text-property location-start (point) 'agent-review-thread-item-title-face))
     (insert " ")
     (let ((summary-start (point)))
       (insert summary)
@@ -339,8 +369,7 @@
         (if (string-empty-p timestamp)
             ""
           (concat " - " (propertize timestamp 'face 'agent-review-info-state-face))))
-      (insert "    ")
-      (insert (replace-regexp-in-string "\n" "\n    " body))
+      (agent-review-render-insert-markdown body 4 'agent-review-thread-body-face)
       (insert "\n"))
     (add-text-properties start (point)
                          `(agent-review-thread-id ,thread-id
@@ -397,13 +426,14 @@
                                messages)))
              (thread-id (alist-get 'thread_id thread))
              (start (point)))
+        (insert (propertize " \n" 'face 'agent-review-thread-diff-begin-face))
         (insert (propertize
                  (format "> %d comment%s from %s%s\n"
                          (length messages)
                          (if (= (length messages) 1) "" "s")
                          (mapconcat (lambda (author) (concat "@" author)) authors ", ")
                          (agent-review--thread-status-suffix thread))
-                 'face 'font-lock-comment-face))
+                 'face 'agent-review-in-diff-thread-title-face))
         (dolist (message messages)
           (let ((author (or (alist-get 'author_id message) "unknown"))
                 (timestamp (agent-review--message-display-time message))
@@ -414,12 +444,12 @@
               (insert " - ")
               (insert (propertize timestamp 'face 'agent-review-timestamp-face)))
             (insert "\n")
-            (agent-review-render-insert-markdown body 4 'agent-review-thread-body-face)
+            (agent-review-render-insert-markdown body 4 'agent-review-in-diff-thread-body-face)
             (insert "\n")))
         (insert "  ")
         (insert-button
          "Reply"
-         'face 'agent-review-meta-key-face
+         'face 'agent-review-button-face
          'action (lambda (button)
                    (save-excursion
                      (goto-char (button-start button))
@@ -427,12 +457,13 @@
         (insert "  ")
         (insert-button
          (if (equal (alist-get 'state thread) "resolved") "Unresolve" "Resolve")
-         'face 'agent-review-meta-key-face
+         'face 'agent-review-button-face
          'action (lambda (button)
                    (save-excursion
                      (goto-char (button-start button))
                      (call-interactively #'agent-review-toggle-thread-state))))
         (insert "\n")
+        (insert (propertize " \n" 'face 'agent-review-thread-diff-end-face))
         (insert "\n")
         (add-text-properties start (point)
                              `(agent-review-thread-id ,thread-id
@@ -648,6 +679,7 @@
           (dolist (thread (reverse threads))
             (save-excursion
               (agent-review--insert-inline-thread thread))))))
+    (magit-map-sections 'magit-section-maybe-update-visibility-indicator)
     (goto-char (point-min))))
 
 (defun agent-review--recompute-thread-status (thread current-head)
