@@ -47,5 +47,35 @@
             (should (equal 2 (length (alist-get 'messages (car (alist-get 'threads review))))))))
       (delete-directory repo t))))
 
+(ert-deftest agent-review-store-create-with-review-type ()
+  "Reviews should include review_type field."
+  (let ((branch-review (agent-review-store-create "/tmp/repo" "feat" "main" "deadbeef" '("deadbeef"))))
+    (should (equal "branch" (alist-get 'review_type branch-review))))
+  (let ((uncommitted-review (agent-review-store-create "/tmp/repo" "feat" nil nil nil "uncommitted")))
+    (should (equal "uncommitted" (alist-get 'review_type uncommitted-review)))
+    (should (null (alist-get 'base_ref uncommitted-review)))
+    (should (null (alist-get 'head_ref uncommitted-review)))
+    (should (null (alist-get 'head_commits uncommitted-review)))))
+
+(ert-deftest agent-review-store-read-infers-branch-type ()
+  "Reading a review without review_type should default to branch."
+  (let* ((repo (make-temp-file "agent-review-store-" t))
+         (file (agent-review-store-review-file repo "feat"))
+         (review (agent-review-store-create repo "feat" "main" "deadbeef" '("deadbeef"))))
+    (unwind-protect
+        (progn
+          ;; Remove review_type to simulate old format
+          (setq review (assq-delete-all 'review_type review))
+          (agent-review-store-write file review)
+          (let ((loaded (agent-review-store-read file)))
+            (should (equal "branch" (alist-get 'review_type loaded)))))
+      (delete-directory repo t))))
+
+(ert-deftest agent-review-store-uncommitted-review-file ()
+  "Uncommitted review file uses branch-uncommitted.json."
+  (let ((file (agent-review-store-uncommitted-review-file "/tmp/repo" "feat")))
+    (should (string-match-p "feat-uncommitted\\.json$" file))
+    (should (string-match-p "\\.agent-review/" file))))
+
 (provide 'agent-review-store-test)
 ;;; agent-review-store-test.el ends here

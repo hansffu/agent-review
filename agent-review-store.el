@@ -55,11 +55,13 @@
   (expand-file-name (concat branch ".json")
                     (expand-file-name ".agent-review" repo-root)))
 
-(defun agent-review-store-create (repo-root branch base-ref head-ref head-commits)
-  "Create a new review for REPO-ROOT, BRANCH, BASE-REF, HEAD-REF and HEAD-COMMITS."
+(defun agent-review-store-create (repo-root branch base-ref head-ref head-commits &optional review-type)
+  "Create a new review for REPO-ROOT, BRANCH, BASE-REF, HEAD-REF and HEAD-COMMITS.
+REVIEW-TYPE is \"branch\" (default) or \"uncommitted\"."
   (let ((now (agent-review-store--now)))
     (list
      (cons 'version agent-review-store-version)
+     (cons 'review_type (or review-type "branch"))
      (cons 'review_id (agent-review-store--id "review"))
      (cons 'repo_root repo-root)
      (cons 'branch branch)
@@ -67,7 +69,7 @@
      (cons 'head_ref head-ref)
      (cons 'created_at now)
      (cons 'updated_at now)
-     (cons 'head_commits (copy-sequence head-commits))
+     (cons 'head_commits (and head-commits (copy-sequence head-commits)))
      (cons 'events (list (list (cons 'kind "created")
                                (cons 'created_at now))))
      (cons 'agent_handoff nil)
@@ -75,11 +77,19 @@
 
 (defun agent-review-store-read (file)
   "Read review data from FILE."
-  (let ((json-object-type 'alist)
-        (json-array-type 'list)
-        (json-key-type 'symbol)
-        (json-false :false))
-    (json-read-file file)))
+  (let* ((json-object-type 'alist)
+         (json-array-type 'list)
+         (json-key-type 'symbol)
+         (json-false :false)
+         (review (json-read-file file)))
+    (unless (alist-get 'review_type review)
+      (setq review (cons (cons 'review_type "branch") review)))
+    review))
+
+(defun agent-review-store-uncommitted-review-file (repo-root branch)
+  "Return the uncommitted review file path for BRANCH inside REPO-ROOT."
+  (expand-file-name (concat branch "-uncommitted.json")
+                    (expand-file-name ".agent-review" repo-root)))
 
 (defun agent-review-store-write (file review)
   "Write REVIEW to FILE."
