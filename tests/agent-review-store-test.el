@@ -5,7 +5,7 @@
 (ert-deftest agent-review-store-create-produces-required-schema ()
   (should (fboundp 'agent-review-store-create))
   (let* ((review (agent-review-store-create "/tmp/repo" "feature/offline" "main" "deadbeef" '("deadbeef")))
-         (keys '(version review_id repo_root branch base_ref head_ref
+         (keys '(version review_type review_id repo_root branch base_ref head_ref
                  created_at updated_at head_commits events agent_handoff threads)))
     (dolist (key keys)
       (should (assoc key review)))
