@@ -115,6 +115,9 @@
 (defvar-local agent-review--base-commit nil)
 (defvar-local agent-review--head-commit nil)
 
+(defclass agent-review--metadata-section (magit-section) ())
+(defclass agent-review--commits-section (magit-section) ())
+(defclass agent-review--root-section (magit-section) ())
 (defclass agent-review--diff-section (magit-section) ())
 (defclass agent-review--threads-section (magit-section) ())
 (defclass agent-review--thread-section (magit-section) ())
@@ -217,17 +220,18 @@
 
 (defun agent-review--insert-commits-section (commits)
   "Insert commit list section for COMMITS."
-  (agent-review--insert-section-label (format "Total %d commits" (length commits)))
-  (if commits
-      (dolist (commit commits)
-        (let ((hash-start (point)))
-          (insert "* " (alist-get 'short commit))
-          (add-face-text-property (+ hash-start 2) (point) 'agent-review-hash-face)
-          (insert " " (alist-get 'subject commit) "\n")))
-    (let ((empty-start (point)))
-      (insert "No new commits.\n")
-      (add-face-text-property empty-start (1- (point)) 'agent-review-empty-state-face)))
-  (insert "\n"))
+  (magit-insert-section section (agent-review--commits-section)
+    (magit-insert-heading (format "Total %d commits" (length commits)))
+    (if commits
+        (dolist (commit commits)
+          (let ((hash-start (point)))
+            (insert "* " (alist-get 'short commit))
+            (add-face-text-property (+ hash-start 2) (point) 'agent-review-hash-face)
+            (insert " " (alist-get 'subject commit) "\n")))
+      (let ((empty-start (point)))
+        (insert "No new commits.\n")
+        (add-face-text-property empty-start (1- (point)) 'agent-review-empty-state-face)))
+    (insert "\n")))
 
 (defun agent-review--status-code-label (status)
   "Return display label for git STATUS."
@@ -605,42 +609,45 @@
                                    :test #'equal))
          (inhibit-read-only t))
     (erase-buffer)
-    (agent-review--insert-header review open-count)
-    (agent-review--insert-labeled-line "Repo" (alist-get 'repo_root review))
-    (agent-review--insert-labeled-line "Base" (alist-get 'base_ref review))
-    (agent-review--insert-labeled-line "Head" (alist-get 'head_ref review))
-    (agent-review--insert-labeled-line "Updated" (alist-get 'updated_at review))
-    (insert "\n")
-    (magit-insert-section section (agent-review--threads-section)
-      (magit-insert-heading
-        (format "Threads: %d open thread%s (%d resolved)"
-                open-count
-                (if (= open-count 1) "" "s")
-                resolved-count))
-      (if threads
-          (dolist (thread threads)
-            (agent-review--insert-thread-section thread))
-        (let ((empty-start (point)))
-          (insert "No threads yet.\n")
-          (add-face-text-property empty-start (1- (point)) 'agent-review-empty-state-face)))
-      (insert "\n"))
-    (agent-review--insert-commits-section commits)
-    (magit-insert-section section (agent-review--diff-section)
-      (magit-insert-heading
-        (format "Files changed (%d files; %d additions, %d deletions)"
-                (alist-get 'files diff-summary)
-                (alist-get 'additions diff-summary)
-                (alist-get 'deletions diff-summary)))
-      (if (string-empty-p agent-review--diff-text)
+    (magit-insert-section section (agent-review--root-section)
+      (agent-review--insert-header review open-count)
+      (magit-insert-section section (agent-review--metadata-section)
+        (magit-insert-heading "Metadata")
+        (agent-review--insert-labeled-line "Repo" (alist-get 'repo_root review))
+        (agent-review--insert-labeled-line "Base" (alist-get 'base_ref review))
+        (agent-review--insert-labeled-line "Head" (alist-get 'head_ref review))
+        (agent-review--insert-labeled-line "Updated" (alist-get 'updated_at review))
+        (insert "\n"))
+      (magit-insert-section section (agent-review--threads-section)
+        (magit-insert-heading
+          (format "Threads: %d open thread%s (%d resolved)"
+                  open-count
+                  (if (= open-count 1) "" "s")
+                  resolved-count))
+        (if threads
+            (dolist (thread threads)
+              (agent-review--insert-thread-section thread))
           (let ((empty-start (point)))
-            (insert "No changes.\n")
-            (add-face-text-property empty-start (1- (point)) 'agent-review-empty-state-face))
-        (agent-review-render-insert-diff agent-review--diff-text)
-        ;; Insert inline thread blocks after diff lines. Iterate in reverse
-        ;; so older comments stay above newer ones at the same anchor.
-        (dolist (thread (reverse threads))
-          (save-excursion
-            (agent-review--insert-inline-thread thread)))))
+            (insert "No threads yet.\n")
+            (add-face-text-property empty-start (1- (point)) 'agent-review-empty-state-face)))
+        (insert "\n"))
+      (agent-review--insert-commits-section commits)
+      (magit-insert-section section (agent-review--diff-section)
+        (magit-insert-heading
+          (format "Files changed (%d files; %d additions, %d deletions)"
+                  (alist-get 'files diff-summary)
+                  (alist-get 'additions diff-summary)
+                  (alist-get 'deletions diff-summary)))
+        (if (string-empty-p agent-review--diff-text)
+            (let ((empty-start (point)))
+              (insert "No changes.\n")
+              (add-face-text-property empty-start (1- (point)) 'agent-review-empty-state-face))
+          (agent-review-render-insert-diff agent-review--diff-text)
+          ;; Insert inline thread blocks after diff lines. Iterate in reverse
+          ;; so older comments stay above newer ones at the same anchor.
+          (dolist (thread (reverse threads))
+            (save-excursion
+              (agent-review--insert-inline-thread thread))))))
     (goto-char (point-min))))
 
 (defun agent-review--recompute-thread-status (thread current-head)
