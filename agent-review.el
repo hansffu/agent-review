@@ -106,6 +106,9 @@
 (defvar-local agent-review--head-commit nil)
 
 (defclass agent-review--diff-section (magit-section) ())
+(defclass agent-review--threads-section (magit-section) ())
+(defclass agent-review--thread-section (magit-section) ())
+(defclass agent-review--thread-message-section (magit-section) ())
 
 (define-derived-mode agent-review-mode magit-section-mode "Agent Review"
   "Major mode for offline branch reviews."
@@ -304,6 +307,42 @@
     (insert "\n")
     (add-text-properties start (point)
                          `(agent-review-thread-id ,(alist-get 'thread_id thread)
+                                                  mouse-face highlight))))
+
+(defun agent-review--insert-thread-message (thread-id message)
+  "Insert MESSAGE in a thread section for THREAD-ID."
+  (let* ((author (or (alist-get 'author_id message) "unknown"))
+         (created-at (or (alist-get 'created_at message) ""))
+         (timestamp (if (string-empty-p created-at)
+                        ""
+                      (agent-review--format-display-time created-at)))
+         (body (or (alist-get 'body message) ""))
+         (start (point)))
+    (magit-insert-section message-section (agent-review--thread-message-section)
+      (magit-insert-heading
+        "  "
+        (propertize (format "@%s" author) 'face 'agent-review-thread-location-face)
+        (if (string-empty-p timestamp)
+            ""
+          (concat " - " (propertize timestamp 'face 'agent-review-info-state-face))))
+      (insert "    ")
+      (insert (replace-regexp-in-string "\n" "\n    " body))
+      (insert "\n"))
+    (add-text-properties start (point)
+                         `(agent-review-thread-id ,thread-id
+                                                  mouse-face highlight))))
+
+(defun agent-review--insert-thread-section (thread)
+  "Insert THREAD as a Magit section with nested message sections."
+  (let* ((thread-id (alist-get 'thread_id thread))
+         (start (point)))
+    (magit-insert-section thread-section (agent-review--thread-section thread-id)
+      (agent-review--insert-thread-line thread)
+      (dolist (message (alist-get 'messages thread))
+        (agent-review--insert-thread-message thread-id message))
+      (insert "\n"))
+    (add-text-properties start (point)
+                         `(agent-review-thread-id ,thread-id
                                                   mouse-face highlight))))
 
 (defun agent-review--thread-anchor (thread)
@@ -535,18 +574,19 @@
     (agent-review--insert-labeled-line "Head" (alist-get 'head_ref review))
     (agent-review--insert-labeled-line "Updated" (alist-get 'updated_at review))
     (insert "\n")
-    (agent-review--insert-section-label
-     (format "Threads: %d open thread%s (%d resolved)"
-             open-count
-             (if (= open-count 1) "" "s")
-             resolved-count))
-    (if threads
-        (dolist (thread threads)
-          (agent-review--insert-thread-line thread))
-      (let ((empty-start (point)))
-        (insert "No threads yet.\n")
-        (add-face-text-property empty-start (1- (point)) 'agent-review-empty-state-face)))
-    (insert "\n")
+    (magit-insert-section section (agent-review--threads-section)
+      (magit-insert-heading
+        (format "Threads: %d open thread%s (%d resolved)"
+                open-count
+                (if (= open-count 1) "" "s")
+                resolved-count))
+      (if threads
+          (dolist (thread threads)
+            (agent-review--insert-thread-section thread))
+        (let ((empty-start (point)))
+          (insert "No threads yet.\n")
+          (add-face-text-property empty-start (1- (point)) 'agent-review-empty-state-face)))
+      (insert "\n"))
     (agent-review--insert-commits-section commits)
     (magit-insert-section section (agent-review--diff-section)
       (magit-insert-heading
