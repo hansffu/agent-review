@@ -44,5 +44,58 @@
     (should-not (nth 3 captured))
     (should (equal "main" (nth 6 captured)))))
 
+(ert-deftest agent-review-git-nil-base-ref-returns-uncommitted-diff ()
+  "Nil base-ref should produce a diff of uncommitted changes."
+  (agent-review-test-with-temp-repo (repo)
+    ;; Add uncommitted change
+    (agent-review-test--write-file (expand-file-name "demo.txt" repo) "one\ntwo\nthree\n")
+    (let ((diff (agent-review-git-unified-diff repo nil)))
+      (should (stringp diff))
+      (should (string-match-p "three" diff)))))
+
+(ert-deftest agent-review-git-nil-base-ref-changed-files ()
+  "Nil base-ref should list uncommitted changed files."
+  (agent-review-test-with-temp-repo (repo)
+    (agent-review-test--write-file (expand-file-name "demo.txt" repo) "one\ntwo\nthree\n")
+    (let ((files (agent-review-git-changed-files repo nil)))
+      (should (equal 1 (length files)))
+      (should (equal "demo.txt" (alist-get 'path (car files)))))))
+
+(ert-deftest agent-review-git-nil-base-ref-diff-summary ()
+  "Nil base-ref should return summary of uncommitted changes."
+  (agent-review-test-with-temp-repo (repo)
+    (agent-review-test--write-file (expand-file-name "demo.txt" repo) "one\ntwo\nthree\n")
+    (let ((summary (agent-review-git-diff-summary repo nil)))
+      (should (equal 1 (alist-get 'files summary)))
+      (should (equal 1 (alist-get 'additions summary))))))
+
+(ert-deftest agent-review-git-nil-base-ref-commit-list-returns-nil ()
+  "Nil base-ref should return nil for commit list and headlines."
+  (agent-review-test-with-temp-repo (repo)
+    (should (null (agent-review-git-commit-list repo nil)))
+    (should (null (agent-review-git-commit-headlines repo nil)))))
+
+(ert-deftest agent-review-git-has-uncommitted-changes ()
+  "Detects uncommitted changes in the working tree."
+  (agent-review-test-with-temp-repo (repo)
+    (should-not (agent-review-git-has-uncommitted-changes repo))
+    (agent-review-test--write-file (expand-file-name "demo.txt" repo) "one\ntwo\nthree\n")
+    (should (agent-review-git-has-uncommitted-changes repo))))
+
+(ert-deftest agent-review-git-prompt-base-ref-includes-uncommitted ()
+  "Uncommitted option appears first when uncommitted changes exist."
+  (let ((captured nil))
+    (cl-letf (((symbol-function 'completing-read)
+               (lambda (prompt collection predicate require-match initial hist def inherit)
+                 (setq captured (list prompt collection predicate require-match initial hist def inherit))
+                 "uncommitted")))
+      (agent-review-test-with-temp-repo (repo)
+        (agent-review-test--write-file (expand-file-name "demo.txt" repo) "one\ntwo\nthree\n")
+        (should (equal "uncommitted" (agent-review-git-prompt-base-ref repo)))))
+    ;; "uncommitted" should be first in the collection
+    (should (equal "uncommitted" (car (nth 1 captured))))
+    ;; "uncommitted" should be the default
+    (should (equal "uncommitted" (nth 6 captured)))))
+
 (provide 'agent-review-git-test)
 ;;; agent-review-git-test.el ends here

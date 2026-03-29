@@ -50,15 +50,25 @@
      ((member "master" refs) "master")
      (t (car refs)))))
 
+(defun agent-review-git-has-uncommitted-changes (&optional repo-root)
+  "Return non-nil if REPO-ROOT has uncommitted changes against HEAD."
+  (let ((default-directory (or repo-root default-directory)))
+    (not (eq 0 (process-file "git" nil nil nil "diff" "--quiet" "HEAD")))))
+
 (defun agent-review-git-prompt-base-ref (&optional repo-root)
-  "Prompt for a base ref in REPO-ROOT with free-form input enabled."
+  "Prompt for a base ref in REPO-ROOT with free-form input enabled.
+When uncommitted changes exist, \"uncommitted\" is offered as the default."
   (let* ((refs (agent-review-git-local-refs repo-root))
-         (default (agent-review-git-default-base-ref repo-root)))
+         (has-uncommitted (agent-review-git-has-uncommitted-changes repo-root))
+         (candidates (if has-uncommitted (cons "uncommitted" refs) refs))
+         (default (if has-uncommitted
+                      "uncommitted"
+                    (agent-review-git-default-base-ref repo-root))))
     (completing-read
      (if default
          (format "Base ref (default %s): " default)
        "Base ref: ")
-     refs
+     candidates
      nil
      nil
      nil
@@ -76,26 +86,37 @@
   (string-trim-right
    (agent-review-git--call repo-root "rev-parse" rev)))
 
+(defun agent-review-git--diff-ref (base-ref)
+  "Return the git diff ref argument for BASE-REF.
+When BASE-REF is nil, returns \"HEAD\" for uncommitted changes.
+Otherwise returns \"BASE-REF..HEAD\"."
+  (if base-ref (format "%s..HEAD" base-ref) "HEAD"))
+
 (defun agent-review-git-commit-list (repo-root base-ref)
-  "Return commits in BASE-REF..HEAD for REPO-ROOT."
-  (agent-review-git--lines repo-root "rev-list" "--reverse" (format "%s..HEAD" base-ref)))
+  "Return commits in BASE-REF..HEAD for REPO-ROOT.
+Returns nil when BASE-REF is nil."
+  (when base-ref
+    (agent-review-git--lines repo-root "rev-list" "--reverse" (format "%s..HEAD" base-ref))))
 
 (defun agent-review-git-unified-diff (repo-root base-ref)
-  "Return the unified diff for BASE-REF..HEAD in REPO-ROOT."
+  "Return the unified diff for BASE-REF..HEAD in REPO-ROOT.
+When BASE-REF is nil, returns the diff of uncommitted changes against HEAD."
   (agent-review-git--call repo-root "diff" "--no-color" "--no-ext-diff" "--unified=3"
-                          (format "%s..HEAD" base-ref)))
+                          (agent-review-git--diff-ref base-ref)))
 
 (defun agent-review-git-commit-headlines (repo-root base-ref)
   "Return commit headlines in BASE-REF..HEAD for REPO-ROOT.
-Each entry is an alist with keys `short' and `subject'."
-  (mapcar
-   (lambda (line)
-     (pcase-let ((`(,short ,subject)
-                  (split-string line "\t" t)))
-       `((short . ,short)
-         (subject . ,subject))))
-   (agent-review-git--lines repo-root "log" "--format=%h%x09%s"
-                            (format "%s..HEAD" base-ref))))
+Each entry is an alist with keys `short' and `subject'.
+Returns nil when BASE-REF is nil."
+  (when base-ref
+    (mapcar
+     (lambda (line)
+       (pcase-let ((`(,short ,subject)
+                    (split-string line "\t" t)))
+         `((short . ,short)
+           (subject . ,subject))))
+     (agent-review-git--lines repo-root "log" "--format=%h%x09%s"
+                              (format "%s..HEAD" base-ref)))))
 
 (defun agent-review-git-changed-files (repo-root base-ref)
   "Return changed files in BASE-REF..HEAD for REPO-ROOT.
@@ -113,7 +134,7 @@ Each entry is an alist with keys `status' and `path'."
        `((status . ,status)
          (path . ,path))))
    (agent-review-git--lines repo-root "diff" "--name-status" "--no-color"
-                            (format "%s..HEAD" base-ref))))
+                            (agent-review-git--diff-ref base-ref))))
 
 (defun agent-review-git-diff-summary (repo-root base-ref)
   "Return diff summary counts in BASE-REF..HEAD for REPO-ROOT."
@@ -121,7 +142,7 @@ Each entry is an alist with keys `status' and `path'."
         (additions 0)
         (deletions 0))
     (dolist (line (agent-review-git--lines repo-root "diff" "--numstat" "--no-color"
-                                           (format "%s..HEAD" base-ref)))
+                                           (agent-review-git--diff-ref base-ref)))
       (pcase-let* ((`(,additions-str ,deletions-str . ,_) (split-string line "\t"))
                    (binary-file (or (equal additions-str "-")
                                     (equal deletions-str "-"))))
