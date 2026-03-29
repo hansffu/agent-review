@@ -106,8 +106,9 @@
     (mapcar #'agent-review-store--json-ready value))
    (t value)))
 
-(defun agent-review-store-add-thread (review anchor body &optional author-type author-id)
-  "Add a new thread with ANCHOR and BODY to REVIEW."
+(defun agent-review-store-add-thread (review anchor body &optional author-type author-id snapshot-diff-hunk)
+  "Add a new thread with ANCHOR and BODY to REVIEW.
+SNAPSHOT-DIFF-HUNK stores the original reviewed diff snippet."
   (let* ((thread-id (agent-review-store--id "thread"))
          (now (agent-review-store--now))
          (message `((message_id . ,(agent-review-store--id "msg"))
@@ -122,6 +123,8 @@
                    (anchor_status . "active")
                    (remap_history . nil)
                    (messages . (,message)))))
+    (when (and snapshot-diff-hunk (> (length snapshot-diff-hunk) 0))
+      (setq thread (append thread `((snapshot_diff_hunk . ,snapshot-diff-hunk)))))
     (setq review
           (agent-review-store--put review 'threads
                                    (append (alist-get 'threads review) (list thread))))

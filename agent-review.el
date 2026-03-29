@@ -187,6 +187,77 @@
       (and (> (point) (point-min))
            (get-text-property (1- (point)) property))))
 
+(defun agent-review--diff-anchor-at (position)
+  "Return the diff anchor at POSITION line, or nil."
+  (save-excursion
+    (goto-char position)
+    (beginning-of-line)
+    (get-text-property (point) 'agent-review-diff-anchor)))
+
+(defun agent-review--selected-diff-lines ()
+  "Return selected diff lines as plain strings."
+  (let* ((end-pos (if (use-region-p)
+                      (max (region-beginning) (1- (region-end)))
+                    (point)))
+         (beg (if (use-region-p)
+                  (save-excursion
+                    (goto-char (region-beginning))
+                    (line-beginning-position))
+                (line-beginning-position)))
+         (end (save-excursion
+                (goto-char end-pos)
+                (line-end-position)))
+         lines)
+    (save-excursion
+      (goto-char beg)
+      (while (<= (point) end)
+        (let ((line-beg (line-beginning-position))
+              (line-end (line-end-position)))
+          (when (and (get-text-property line-beg 'agent-review-diff-anchor)
+                     (memq (char-after line-beg) '(?\s ?+ ?-)))
+            (push (buffer-substring-no-properties line-beg line-end) lines)))
+        (forward-line 1)))
+    (nreverse lines)))
+
+(defun agent-review--build-snapshot-diff-hunk (anchor)
+  "Return a snapshot diff snippet for ANCHOR from current selection."
+  (let* ((header (alist-get 'diff_hunk anchor))
+         (lines (agent-review--selected-diff-lines))
+         (parts (delq nil (list header
+                                (and lines (string-join lines "\n"))))))
+    (when parts
+      (concat (string-join parts "\n") "\n"))))
+
+(defun agent-review--build-new-thread-anchor ()
+  "Build an anchor for a new thread from point or active region."
+  (let* ((end-pos (if (use-region-p)
+                      (max (region-beginning) (1- (region-end)))
+                    (point)))
+         (end-anchor (agent-review--diff-anchor-at end-pos))
+         (start-anchor (and (use-region-p)
+                            (agent-review--diff-anchor-at (region-beginning)))))
+    (cond
+     ((null end-anchor)
+      nil)
+     ((and start-anchor
+           (or (not (equal (alist-get 'path start-anchor) (alist-get 'path end-anchor)))
+               (not (equal (alist-get 'side start-anchor) (alist-get 'side end-anchor)))))
+      (user-error "Multiline comment must stay on one file and side"))
+     ((and (use-region-p) (null start-anchor))
+      (user-error "Region must start on a diff line")))
+    (let ((anchor (copy-tree end-anchor)))
+      (if (and start-anchor
+               (not (equal (alist-get 'line start-anchor)
+                           (alist-get 'line end-anchor))))
+          (progn
+            (setq anchor (agent-review--alist-set
+                          anchor 'start_line (alist-get 'line start-anchor)))
+            (setq anchor (agent-review--alist-set
+                          anchor 'start_side (alist-get 'side start-anchor))))
+        (setq anchor (agent-review--alist-delete anchor 'start_line))
+        (setq anchor (agent-review--alist-delete anchor 'start_side)))
+      anchor)))
+
 (defun agent-review--state-face (state)
   "Return face symbol for thread STATE."
   (pcase state
@@ -323,9 +394,16 @@
          (latest (car (last messages)))
          (state (or (alist-get 'state thread) "open"))
          (status (alist-get 'anchor_status thread))
-         (location (format "%s:%s"
-                           (or (alist-get 'path anchor) "?")
-                           (or (alist-get 'line anchor) "?")))
+         (start-line (alist-get 'start_line anchor))
+         (end-line (alist-get 'line anchor))
+         (location (if (and start-line end-line (/= start-line end-line))
+                       (format "%s:%d-%d"
+                               (or (alist-get 'path anchor) "?")
+                               (min start-line end-line)
+                               (max start-line end-line))
+                     (format "%s:%s"
+                             (or (alist-get 'path anchor) "?")
+                             (or end-line "?"))))
          (summary (replace-regexp-in-string
                    "\n+" " "
                    (or (alist-get 'body latest) "")))
@@ -375,12 +453,41 @@
                          `(agent-review-thread-id ,thread-id
                                                   mouse-face highlight))))
 
+(defun agent-review--insert-thread-snapshot (thread)
+  "Insert stored diff snapshot for THREAD."
+  (let* ((anchor (agent-review--thread-anchor thread))
+         (snapshot (or (alist-get 'snapshot_diff_hunk thread)
+                       (when-let ((header (alist-get 'diff_hunk anchor)))
+                         (concat header "\n")))))
+    (when (and snapshot (not (string-empty-p snapshot)))
+      (insert (propertize "  \n" 'face 'agent-review-thread-diff-begin-face))
+      (let ((beg (point)))
+        (agent-review-render--insert-fontified snapshot 'diff-mode 2)
+        (let ((end (point)))
+          (make-button
+           beg end
+           'face nil
+           'help-echo "Click to go to the line in diff."
+           'action (lambda (_)
+                     (push-mark)
+                     (when (agent-review-render-goto-diff-line
+                            (alist-get 'path anchor)
+                            (alist-get 'side anchor)
+                            (alist-get 'line anchor))
+                       (recenter))))))
+      (insert (propertize "  \n" 'face 'agent-review-thread-diff-end-face))
+      (insert "\n"))))
+
 (defun agent-review--insert-thread-section (thread)
   "Insert THREAD as a Magit section with nested message sections."
   (let* ((thread-id (alist-get 'thread_id thread))
          (start (point)))
-    (magit-insert-section thread-section (agent-review--thread-section thread-id)
+    (magit-insert-section thread-section
+        (agent-review--thread-section
+         thread-id
+         (equal (alist-get 'anchor_status thread) "outdated"))
       (agent-review--insert-thread-line thread)
+      (agent-review--insert-thread-snapshot thread)
       (dolist (message (alist-get 'messages thread))
         (agent-review--insert-thread-message thread-id message))
       (insert "\n"))
@@ -599,8 +706,25 @@
           (setq updated-anchor (agent-review--alist-set updated-anchor 'diff_hunk
                                                         (alist-get 'diff_hunk candidate)))
           (if-let ((start-line (alist-get 'start_line candidate)))
-              (setq updated-anchor (agent-review--alist-set updated-anchor 'start_line start-line))
-            (setq updated-anchor (agent-review--alist-delete updated-anchor 'start_line)))
+              (progn
+                (setq updated-anchor (agent-review--alist-set updated-anchor 'start_line start-line))
+                (setq updated-anchor (agent-review--alist-set
+                                      updated-anchor
+                                      'start_side
+                                      (or (alist-get 'start_side candidate)
+                                          (alist-get 'side candidate)))))
+            (if-let ((existing-start-line (alist-get 'start_line anchor)))
+                (progn
+                  (setq updated-anchor
+                        (agent-review--alist-set updated-anchor 'start_line existing-start-line))
+                  (setq updated-anchor
+                        (agent-review--alist-set
+                         updated-anchor
+                         'start_side
+                         (or (alist-get 'start_side anchor)
+                             (alist-get 'side anchor)))))
+              (setq updated-anchor (agent-review--alist-delete updated-anchor 'start_line))
+              (setq updated-anchor (agent-review--alist-delete updated-anchor 'start_side))))
           (setq thread (agent-review--alist-set thread 'current_anchor updated-anchor))
           (setq thread (agent-review--alist-set thread 'anchor_status "remapped"))
           (setq thread
@@ -830,7 +954,7 @@
   (unless agent-review--review
     (user-error "No review is active in this buffer"))
   (let ((thread-id (agent-review--property-at-point 'agent-review-thread-id))
-        (anchor (agent-review--property-at-point 'agent-review-diff-anchor))
+        (anchor (agent-review--build-new-thread-anchor))
         (author (or user-login-name user-real-login-name "user")))
     (cond
      (thread-id
@@ -845,8 +969,11 @@
       (let ((body (read-string "Comment: ")))
         (when (string-blank-p body)
           (user-error "Comment cannot be empty"))
-        (setq agent-review--review
-              (agent-review-store-add-thread agent-review--review anchor body "human" author))
+        (let ((snapshot (agent-review--build-snapshot-diff-hunk anchor)))
+          (setq agent-review--review
+                (agent-review-store-add-thread agent-review--review
+                                               anchor body "human" author
+                                               snapshot)))
         (agent-review--persist-and-rerender
          (alist-get 'thread_id (car (last (alist-get 'threads agent-review--review)))))))
      (t

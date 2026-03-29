@@ -31,7 +31,9 @@
                    (diff_hunk . "@@ -1 +1,2 @@"))))
     (unwind-protect
         (progn
-          (setq review (agent-review-store-add-thread review anchor "First comment" "human" "tester"))
+          (setq review (agent-review-store-add-thread
+                        review anchor "First comment" "human" "tester"
+                        "@@ -1 +1,2 @@\n+two\n"))
           (let ((thread-id (alist-get 'thread_id (car (alist-get 'threads review)))))
             (setq review (agent-review-store-append-reply review thread-id "Follow-up" "agent" "codex"))
             (setq review (agent-review-store-set-thread-state review thread-id "resolved"))
@@ -40,6 +42,8 @@
             (should (equal repo (alist-get 'repo_root review)))
             (should (equal 1 (length (alist-get 'threads review))))
             (should (equal "resolved" (alist-get 'state (car (alist-get 'threads review)))))
+            (should (equal "@@ -1 +1,2 @@\n+two\n"
+                           (alist-get 'snapshot_diff_hunk (car (alist-get 'threads review)))))
             (should (equal 2 (length (alist-get 'messages (car (alist-get 'threads review))))))))
       (delete-directory repo t))))
 
