@@ -24,6 +24,8 @@
 (defvar-local agent-review--review nil)
 (defvar-local agent-review--review-file nil)
 (defvar-local agent-review--diff-text nil)
+(defvar-local agent-review--base-commit nil)
+(defvar-local agent-review--head-commit nil)
 
 (define-derived-mode agent-review-mode special-mode "Agent Review"
   "Major mode for offline branch reviews."
@@ -32,6 +34,12 @@
 (defun agent-review--now ()
   "Return the current UTC timestamp."
   (format-time-string "%Y-%m-%dT%H:%M:%SZ" (current-time) t))
+
+(defun agent-review--event (kind &optional extra)
+  "Return an event alist for KIND merged with EXTRA."
+  (append `((kind . ,kind)
+            (created_at . ,(agent-review--now)))
+          extra))
 
 (defun agent-review--property-at-point (property)
   "Return PROPERTY around point."
@@ -76,20 +84,26 @@
     (list (string-to-number (match-string 1 line))
           (string-to-number (match-string 2 line)))))
 
-(defun agent-review--make-anchor (review path side line diff-hunk)
-  "Build a thread anchor for REVIEW at PATH, SIDE, LINE and DIFF-HUNK."
-  `((base_commit . ,(agent-review-git-rev-parse
-                     (alist-get 'repo_root review)
-                     (alist-get 'base_ref review)))
-    (head_commit . ,(alist-get 'head_ref review))
+(defun agent-review--sync-commit-cache (review repo-root)
+  "Cache commit ids for REVIEW in REPO-ROOT."
+  (setq agent-review--base-commit
+        (agent-review-git-rev-parse repo-root (alist-get 'base_ref review))
+        agent-review--head-commit
+        (alist-get 'head_ref review)))
+
+(defun agent-review--make-anchor (path side line diff-hunk)
+  "Build a thread anchor for PATH, SIDE, LINE and DIFF-HUNK."
+  `((base_commit . ,agent-review--base-commit)
+    (head_commit . ,agent-review--head-commit)
     (path . ,path)
     (side . ,side)
     (line . ,line)
     (diff_hunk . ,diff-hunk)))
 
-(defun agent-review--insert-diff (review diff-text)
-  "Insert DIFF-TEXT for REVIEW and annotate diff lines."
-  (let ((path nil)
+(defun agent-review--insert-diff (diff-text)
+  "Insert DIFF-TEXT and annotate diff lines."
+  (let ((old-path nil)
+        (new-path nil)
         (old-line 0)
         (new-line 0)
         (diff-hunk nil))
@@ -97,31 +111,38 @@
       (let ((start (point)))
         (insert line "\n")
         (cond
+         ((string-match "^diff --git a/\\(.+\\) b/\\(.+\\)$" line)
+          (setq old-path (match-string 1 line)
+                new-path (match-string 2 line)
+                diff-hunk nil))
+         ((string-prefix-p "--- /dev/null" line)
+          (setq old-path nil))
+         ((string-prefix-p "+++ /dev/null" line)
+          (setq new-path nil))
+         ((string-prefix-p "--- a/" line)
+          (setq old-path (substring line 6)))
          ((string-prefix-p "+++ b/" line)
-          (setq path (substring line 6)))
-         ((or (string-prefix-p "+++ /dev/null" line)
-              (string-prefix-p "--- /dev/null" line))
-          (setq path nil))
+          (setq new-path (substring line 6)))
          ((string-prefix-p "@@ " line)
           (pcase-let ((`(,old ,new) (agent-review--parse-hunk-header line)))
             (setq old-line old
                   new-line new
                   diff-hunk line)))
-         ((and path diff-hunk
+         ((and (or new-path old-path) diff-hunk
                (string-prefix-p "+" line)
                (not (string-prefix-p "+++" line)))
           (put-text-property start (1- (point)) 'agent-review-diff-anchor
-                             (agent-review--make-anchor review path "RIGHT" new-line diff-hunk))
+                             (agent-review--make-anchor (or new-path old-path) "RIGHT" new-line diff-hunk))
           (setq new-line (1+ new-line)))
-         ((and path diff-hunk
+         ((and (or old-path new-path) diff-hunk
                (string-prefix-p "-" line)
                (not (string-prefix-p "---" line)))
           (put-text-property start (1- (point)) 'agent-review-diff-anchor
-                             (agent-review--make-anchor review path "LEFT" old-line diff-hunk))
+                             (agent-review--make-anchor (or old-path new-path) "LEFT" old-line diff-hunk))
           (setq old-line (1+ old-line)))
-         ((and path diff-hunk (string-prefix-p " " line))
+         ((and (or new-path old-path) diff-hunk (string-prefix-p " " line))
           (put-text-property start (1- (point)) 'agent-review-diff-anchor
-                             (agent-review--make-anchor review path "RIGHT" new-line diff-hunk))
+                             (agent-review--make-anchor (or new-path old-path) "RIGHT" new-line diff-hunk))
           (setq old-line (1+ old-line)
                 new-line (1+ new-line))))))))
 
@@ -149,12 +170,12 @@
     (insert "\nDiff:\n")
     (if (string-empty-p agent-review--diff-text)
         (insert "No changes.\n")
-      (agent-review--insert-diff review agent-review--diff-text))
+      (agent-review--insert-diff agent-review--diff-text))
     (goto-char (point-min))))
 
-(defun agent-review--refresh-review-state (review)
-  "Refresh REVIEW with current git state."
-  (let* ((repo-root (alist-get 'repo_root review))
+(defun agent-review--refresh-review-state (review repo-root)
+  "Refresh REVIEW with current git state from REPO-ROOT."
+  (let* ((repo-root (or repo-root (alist-get 'repo_root review)))
          (base-ref (alist-get 'base_ref review))
          (head-ref (agent-review-git-head-commit repo-root))
          (head-commits (agent-review-git-commit-list repo-root base-ref)))
@@ -170,6 +191,8 @@
   (setq agent-review--diff-text
         (agent-review-git-unified-diff (alist-get 'repo_root agent-review--review)
                                        (alist-get 'base_ref agent-review--review)))
+  (agent-review--sync-commit-cache agent-review--review
+                                   (alist-get 'repo_root agent-review--review))
   (agent-review--render)
   (when thread-id
     (agent-review--goto-thread thread-id)))
@@ -181,7 +204,8 @@
     (user-error "No review is active in this buffer"))
   (setq agent-review--review
         (agent-review--refresh-review-state
-         (agent-review-store-read agent-review--review-file)))
+         (agent-review-store-read agent-review--review-file)
+         (alist-get 'repo_root agent-review--review)))
   (agent-review--persist-and-rerender))
 
 (defun agent-review--prompt-existing-review-action (branch)
@@ -195,28 +219,33 @@
    nil
    "Continue"))
 
-(defun agent-review--create-review (repo-root branch &optional replaced)
-  "Create a fresh review in REPO-ROOT for BRANCH.
-When REPLACED is non-nil, tag the review as a replacement."
+(defun agent-review--create-review (repo-root branch)
+  "Create a fresh review in REPO-ROOT for BRANCH."
   (let* ((base-ref (agent-review-git-prompt-base-ref repo-root))
          (head-ref (agent-review-git-head-commit repo-root))
          (head-commits (agent-review-git-commit-list repo-root base-ref))
          (review (agent-review-store-create repo-root branch base-ref head-ref head-commits)))
-    (when replaced
-      (setf (alist-get 'events review)
-            `(((kind . "replaced")
-               (created_at . ,(agent-review--now))))))
+    review))
+
+(defun agent-review--replace-review (repo-root branch previous-review)
+  "Create a replacement review in REPO-ROOT for BRANCH from PREVIOUS-REVIEW."
+  (let ((review (agent-review--create-review repo-root branch)))
+    (setf (alist-get 'events review)
+          (append (copy-tree (alist-get 'events previous-review))
+                  (alist-get 'events review)
+                  (list (agent-review--event "replaced"))))
     review))
 
 (defun agent-review--load-review (repo-root branch review-file)
   "Load or create a review for REPO-ROOT, BRANCH and REVIEW-FILE."
   (let ((review (if (file-exists-p review-file)
-                    (let ((action (agent-review--prompt-existing-review-action branch)))
+                    (let* ((existing-review (agent-review-store-read review-file))
+                           (action (agent-review--prompt-existing-review-action branch)))
                       (if (equal action "Continue")
-                          (agent-review-store-read review-file)
-                        (agent-review--create-review repo-root branch t)))
-                  (agent-review--create-review repo-root branch nil))))
-    (setq review (agent-review--refresh-review-state review))
+                          existing-review
+                        (agent-review--replace-review repo-root branch existing-review)))
+                  (agent-review--create-review repo-root branch))))
+    (setq review (agent-review--refresh-review-state review repo-root))
     (agent-review-store-write review-file review)
     review))
 
@@ -231,6 +260,7 @@ When REPLACED is non-nil, tag the review as a replacement."
             agent-review--diff-text
             (agent-review-git-unified-diff (alist-get 'repo_root review)
                                            (alist-get 'base_ref review)))
+      (agent-review--sync-commit-cache review (alist-get 'repo_root review))
       (agent-review--render))
     (pop-to-buffer buffer)
     buffer))
@@ -244,6 +274,22 @@ When REPLACED is non-nil, tag the review as a replacement."
          (review-file (agent-review-store-review-file repo-root branch))
          (review (agent-review--load-review repo-root branch review-file)))
     (agent-review--open-buffer review-file review)))
+
+;;;###autoload
+(defun agent-review-open (_repo-owner _repo-name _pr-id &optional _new-window _anchor _last-read-time)
+  "Compatibility entrypoint for older callers."
+  (interactive)
+  (agent-review))
+
+;;;###autoload
+(defun agent-review-open-url (_url &optional _new-window &rest _args)
+  "Compatibility wrapper for legacy browse-url handlers."
+  (agent-review))
+
+;;;###autoload
+(defun agent-review-url-parse (_url)
+  "Compatibility predicate for legacy browse-url handlers."
+  nil)
 
 (defun agent-review-context-comment ()
   "Reply to the thread at point or create a new thread from the diff line at point."
