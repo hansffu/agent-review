@@ -67,7 +67,7 @@
       (kbd "o") #'agent-review-notification-open-in-browser)))
 
 (define-derived-mode agent-review-notification-mode agent-review-listview-mode
-  "AgentReviewNotification"
+  "Agent Review Notification"
   "Major mode for list of github notifications.
 
 - Open item: `agent-review-listview-open'

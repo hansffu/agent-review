@@ -87,7 +87,7 @@
   "Function to open an item in list view.  Accept one argument: the item.")
 
 (define-derived-mode agent-review-listview-mode tabulated-list-mode
-  "AgentReviewListview"
+  "Agent Review List View"
   "Base mode for PR list view.
 Derived modes must set the following variables:
 - `tabulated-list-revert-hook'

@@ -28,7 +28,7 @@
 (require 'ghub)
 (require 'ghub-legacy)
 
-(defcustom agent-review-ghub-auth-name 'emacs-agent-review
+(defcustom agent-review-ghub-auth-name 'agent-review
   "Ghub auth name used by `agent-review', see `ghub-request' for details."
   :type 'symbol
   :group 'agent-review)

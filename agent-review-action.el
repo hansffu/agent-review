@@ -115,7 +115,7 @@
 
 (defun agent-review--add-pending-review-thread-exit-callback (orig-buffer review-thread body)
   "Exit callback for adding pending review thread.
-ORIG-BUFFER is the original pr review buffer;
+ORIG-BUFFER is the original Agent Review buffer;
 REVIEW-THREAD is the related thread;
 BODY is the result text user entered."
   (setf (alist-get 'body review-thread) body)
@@ -195,7 +195,7 @@ When a region is active, the review thread is added for multiple lines."
 
 (defun agent-review--submit-review-exit-callback (orig-buffer event body)
   "Exit callback for submitting reviews.
-ORIG-BUFFER is the original pr review buffer;
+ORIG-BUFFER is the original Agent Review buffer;
 EVENT is the review action user selected;
 BODY is the result text user entered."
   (when (buffer-live-p orig-buffer)

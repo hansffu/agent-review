@@ -1,6 +1,6 @@
-# Emacs PR Review
+# Emacs Agent Review
 
-Review Github Pull Request from Emacs!
+Review GitHub pull requests from Emacs!
 
 ![](images/overview.png)
 
@@ -9,7 +9,7 @@ Review Github Pull Request from Emacs!
 
 ### Install
 
-[![](https://melpa.org/packages/agent-review-badge.svg)](https://melpa.org/#/agent-review)
+MELPA release pending. Load this package from a local checkout for now.
 
 ### Setup github token
 
@@ -19,11 +19,11 @@ see its document for more details about how to setup the token.
 Simply put, add the following line to `~/.authinfo` (replace `<...>` accordingly):
 
 ```
-machine api.github.com login <YOUR_USERNAME>^emacs-agent-review password <YOUR_GITHUB_PERSONAL_TOKEN>
+machine api.github.com login <YOUR_USERNAME>^agent-review password <YOUR_GITHUB_PERSONAL_TOKEN>
 ```
 
 You may customize username and api host (for github enterprise instances) using [ghub](https://magit.vc/manual/ghub/Github-Configuration-Variables.html#Github-Configuration-Variables),
-or you can also set `agent-review-ghub-username` and `agent-review-ghub-host` for agent-review only.
+or you can also set `agent-review-ghub-username` and `agent-review-ghub-host` for agent review only.
 
 <details>
   <summary>For github enterprise users</summary>
@@ -32,7 +32,7 @@ The detailed setup for different github enterprise sites may vary. Just for refe
   
   1. set agent-review-ghub-host to "github.corp.my-company.com/api/v3"
   2. set agent-review-ghub-username
-  3. in ~/.authinfo, use `machine github.corp.my-company.com/api/v3 login my-username^emacs-agent-review password ghp_xxxxxxxxxxxx`
+  3. in ~/.authinfo, use `machine github.corp.my-company.com/api/v3 login my-username^agent-review password ghp_xxxxxxxxxxxx`
 
 </details>
 
@@ -57,13 +57,13 @@ Suggested config (especially for evil users):
 
 Personally I suggest two possible workflows:
 
-1. Use `agent-review-notification` as your "dashboard" and enter PR review from it.
+1. Use `agent-review-notification` as your "dashboard" and enter agent review from it.
 2. Use [notmuch](https://notmuchmail.org/notmuch-emacs/) (or some other email client in emacs) to
-receive and read all github notification emails and start `agent-review` from the notmuch message buffer.
+receive and read all GitHub notification emails and start `agent-review` from the notmuch message buffer.
 Running `agent-review` in the email buffer will automatically find the PR url in the email.
 
 
-### Keybindings in AgentReview buffer
+### Keybindings in Agent Review buffer
 
 There's three most-used keybindings:
 
@@ -98,18 +98,18 @@ Some other keybindings or commands:
 
 Evil users will also find some familiar keybindings. See `describe-mode` for more details.
 
-### Keybindings in AgentReviewInput buffer
+### Keybindings in Agent Review Input buffer
 
-When you are adding or editing the comment, you will be editing in a new AgentReviewInput buffer.
+When you are adding or editing the comment, you will be editing in a new Agent Review Input buffer.
 Keybindings in this buffer:
 
 - `C-c C-c`: Finish editing, confirm the content
 - `C-c C-k`: Abort, drop the content
 - `C-c @`: Mention some other (inserting `@username`)
 
-Recommend using (company-emoji)[https://github.com/dunn/company-emoji] to insert emojis in AgentReviewInput buffer.
+Recommend using (company-emoji)[https://github.com/dunn/company-emoji] to insert emojis in Agent Review Input buffer.
 
-### Keybindings in AgentReviewNotification buffer
+### Keybindings in Agent Review Notification buffer
 
 - `RET`: Open the PR (While this buffer lists all types of notifications, only Pull Requests can be opened by this package)
 - `C-c C-n` / `C-c C-p` (`gj` / `gk` for evil users): next/prev page

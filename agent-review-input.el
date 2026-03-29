@@ -40,7 +40,7 @@
     (define-key map (kbd "C-c @") 'agent-review-input-mention-user)
     map))
 
-(define-derived-mode agent-review-input-mode gfm-mode "AgentReviewInput"
+(define-derived-mode agent-review-input-mode gfm-mode "Agent Review Input"
   :interactive nil
   :group 'agent-review
   (use-local-map agent-review-input-mode-map)

@@ -1,11 +1,11 @@
-;;; agent-review.el --- Review github PR    -*- lexical-binding: t; -*-
+;;; agent-review.el --- Agent Review    -*- lexical-binding: t; -*-
 
 ;; Copyright (C) 2021  Yikai Zhao
 
 ;; Author: Yikai Zhao <yikai@z1k.dev>
 ;; Keywords: tools
 ;; Version: 0.1
-;; URL: https://github.com/blahgeek/emacs-agent-review
+;; URL: https://github.com/blahgeek/emacs-pr-review
 ;; Package-Requires: ((emacs "27.1") (magit-section "4.0") (magit "4.0") (markdown-mode "2.5") (ghub "5.0"))
 
 ;; This program is free software; you can redistribute it and/or modify
@@ -23,7 +23,7 @@
 
 ;;; Commentary:
 
-;; Review github PR in EMACS.
+;; Agent Review GitHub pull requests in Emacs.
 
 ;;; Code:
 
@@ -122,7 +122,7 @@ Which means that all sections are collapsed."
   "Hook for `eldoc-documentation-function', return content at current point."
   (get-text-property (point) 'agent-review-eldoc-content))
 
-(define-derived-mode agent-review-mode magit-section-mode "AgentReview"
+(define-derived-mode agent-review-mode magit-section-mode "Agent Review"
   :interactive nil
   :group 'agent-review
   (agent-review--mode-map-setup-for-evil)
@@ -148,7 +148,7 @@ Which means that all sections are collapsed."
   (eldoc-mode))
 
 (defun agent-review--refresh-internal ()
-  "Fetch and reload current AgentReview buffer."
+  "Fetch and reload current Agent Review buffer."
   (let* ((pr-info (agent-review--fetch-pr-info))
          (pr-diff (let-alist pr-info
                     (agent-review--fetch-compare-cached
@@ -172,7 +172,7 @@ Which means that all sections are collapsed."
     (apply #'message "PR %s/%s/%s loaded" agent-review--pr-path)))
 
 (defun agent-review-refresh (&optional clear-pending-reviews)
-  "Fetch and reload current AgentReview buffer.
+  "Fetch and reload current Agent Review buffer.
 If CLEAR-PENDING-REVIEWS is not nil, delete pending reviews if any,
 otherwise, ask interactively."
   (interactive)
@@ -267,7 +267,7 @@ It's used as the default value of `agent-review'."
 
 ;;;###autoload
 (defun agent-review (url &optional new-window)
-  "Open Pr Review with URL (which is a link to github pr).
+  "Open Agent Review with URL (which is a link to a GitHub pull request).
 This is the main entrypoint of `agent-review'.
 If NEW-WINDOW is not nil, open it in a new window.
 When called interactively, user will be prompted to enter a PR url
@@ -281,7 +281,7 @@ and new window will be used when called with prefix."
 
 ;;;###autoload
 (defun agent-review-open-url (url &optional new-window &rest _)
-  "Open Pr Review with URL, in a new window if NEW-WINDOW is not nil.
+  "Open Agent Review with URL, in a new window if NEW-WINDOW is not nil.
 This function is the same as `agent-review',
 but it can be used in `browse-url-handlers' with `agent-review-url-parse'."
   (agent-review url new-window))

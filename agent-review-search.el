@@ -31,7 +31,7 @@
 (declare-function agent-review-open "agent-review")
 
 (define-derived-mode agent-review-search-mode agent-review-listview-mode
-  "AgentReviewSearch"
+  "Agent Review Search"
   :interactive nil
   :group 'agent-review
 
