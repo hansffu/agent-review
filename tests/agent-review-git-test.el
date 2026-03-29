@@ -1,0 +1,35 @@
+;;; agent-review-git-test.el --- Git tests -*- lexical-binding: t; -*-
+
+(require 'test-helper)
+
+(ert-deftest agent-review-git-reads-repo-state ()
+  (should (fboundp 'agent-review-git-repo-root))
+  (should (fboundp 'agent-review-git-current-branch))
+  (should (fboundp 'agent-review-git-local-refs))
+  (should (fboundp 'agent-review-git-default-base-ref))
+  (should (fboundp 'agent-review-git-head-commit))
+  (should (fboundp 'agent-review-git-commit-list))
+  (should (fboundp 'agent-review-git-unified-diff))
+  (agent-review-test-with-temp-repo (repo)
+    (should (equal repo (agent-review-git-repo-root repo)))
+    (should (equal "feature/offline" (agent-review-git-current-branch repo)))
+    (should (member "main" (agent-review-git-local-refs repo)))
+    (should (equal "main" (agent-review-git-default-base-ref repo)))
+    (should (string-match-p "^[0-9a-f]+$" (agent-review-git-head-commit repo)))
+    (should (= 1 (length (agent-review-git-commit-list repo "main"))))
+    (should (string-match-p "two" (agent-review-git-unified-diff repo "main")))))
+
+(ert-deftest agent-review-git-prompt-base-ref-allows-freeform-input ()
+  (should (fboundp 'agent-review-git-prompt-base-ref))
+  (let ((captured nil))
+    (cl-letf (((symbol-function 'completing-read)
+               (lambda (prompt collection predicate require-match initial hist def inherit)
+                 (setq captured (list prompt collection predicate require-match initial hist def inherit))
+                 "abc1234")))
+      (agent-review-test-with-temp-repo (repo)
+        (should (equal "abc1234" (agent-review-git-prompt-base-ref repo)))))
+    (should-not (nth 3 captured))
+    (should (equal "main" (nth 6 captured)))))
+
+(provide 'agent-review-git-test)
+;;; agent-review-git-test.el ends here

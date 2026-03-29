@@ -1,291 +1,295 @@
-;;; agent-review.el --- Agent Review    -*- lexical-binding: t; -*-
+;;; agent-review.el --- Offline agent review -*- lexical-binding: t; -*-
 
-;; Copyright (C) 2021  Yikai Zhao
-
-;; Author: Yikai Zhao <yikai@z1k.dev>
-;; Keywords: tools
-;; Version: 0.1
-;; URL: https://github.com/blahgeek/emacs-pr-review
-;; Package-Requires: ((emacs "27.1") (magit-section "4.0") (magit "4.0") (markdown-mode "2.5") (ghub "5.0"))
-
-;; This program is free software; you can redistribute it and/or modify
-;; it under the terms of the GNU General Public License as published by
-;; the Free Software Foundation, either version 3 of the License, or
-;; (at your option) any later version.
-
-;; This program is distributed in the hope that it will be useful,
-;; but WITHOUT ANY WARRANTY; without even the implied warranty of
-;; MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-;; GNU General Public License for more details.
-
-;; You should have received a copy of the GNU General Public License
-;; along with this program.  If not, see <https://www.gnu.org/licenses/>.
+;; Copyright (C) 2026
 
 ;;; Commentary:
 
-;; Agent Review GitHub pull requests in Emacs.
+;; Offline diff review for the current git branch.
 
 ;;; Code:
 
-(require 'agent-review-common)
-(require 'agent-review-api)
-(require 'agent-review-input)
-(require 'agent-review-render)
-(require 'agent-review-action)
-(require 'tabulated-list)
-
-(defun agent-review--confirm-kill-buffer ()
-  "Hook for `kill-buffer-query-functions', confirm if there's pending reviews."
-  (or (null agent-review--pending-review-threads)
-      (yes-or-no-p "Pending review threads exist in current buffer, really exit? ")))
+(require 'cl-lib)
+(require 'subr-x)
+(require 'agent-review-git)
+(require 'agent-review-store)
 
 (defvar agent-review-mode-map
   (let ((map (make-sparse-keymap)))
-    (set-keymap-parent map magit-section-mode-map)
     (define-key map (kbd "C-c C-r") #'agent-review-refresh)
     (define-key map (kbd "C-c C-c") #'agent-review-context-comment)
-    (define-key map (kbd "C-c C-s") #'agent-review-context-action)
-    (define-key map (kbd "C-c C-e") #'agent-review-context-edit)
-    (define-key map (kbd "C-c C-v") #'agent-review-view-file)
-    (define-key map (kbd "C-c C-f") #'agent-review-goto-file)
-    (define-key map (kbd "C-c C-d") #'agent-review-ediff-file)
-    (define-key map (kbd "C-c C-o") #'agent-review-open-in-default-browser)
-    (define-key map (kbd "C-c C-q") #'agent-review-request-reviews)
-    (define-key map (kbd "C-c C-l") #'agent-review-set-labels)
-    (define-key map (kbd "C-c C-j") #'agent-review-update-reactions)
-    map))
+    (define-key map (kbd "C-c C-s") #'agent-review-toggle-thread-state)
+    map)
+  "Keymap for `agent-review-mode'.")
 
-(defvar agent-review--mode-map-setup-for-evil-done nil)
+(defvar-local agent-review--review nil)
+(defvar-local agent-review--review-file nil)
+(defvar-local agent-review--diff-text nil)
 
-(defun agent-review--mode-map-setup-for-evil ()
-  "Setup map in `agent-review-mode-map' for evil mode (if loaded)."
-  (when (and (fboundp 'evil-define-key*)
-             (not agent-review--mode-map-setup-for-evil-done))
-    (setq agent-review--mode-map-setup-for-evil-done t)
-    (evil-define-key* '(normal motion) agent-review-mode-map
-      (kbd "g r") #'agent-review-refresh
-      (kbd "TAB") #'magit-section-toggle
-      (kbd "z a") #'magit-section-toggle
-      (kbd "z o") #'magit-section-show
-      (kbd "z O") #'magit-section-show-children
-      (kbd "z c") #'magit-section-hide
-      (kbd "z C") #'magit-section-hide-children
-      (kbd "z r") #'agent-review-increase-show-level
-      (kbd "z R") #'agent-review-maximize-show-level
-      (kbd "z m") #'agent-review-decrease-show-level
-      (kbd "z M") #'agent-review-minimize-show-level
-      (kbd "g h") #'magit-section-up
-      (kbd "C-j") #'magit-section-forward
-      (kbd "g j") #'magit-section-forward-sibling
-      (kbd "C-k") #'magit-section-backward
-      (kbd "g k") #'magit-section-backward-sibling
-      (kbd "g f") #'agent-review-goto-file
-      (kbd "g o") #'agent-review-open-in-default-browser
-      [remap evil-previous-line] 'evil-previous-visual-line
-      [remap evil-next-line] 'evil-next-visual-line
-      (kbd "C-o") #'pop-to-mark-command
-      (kbd "q") #'kill-current-buffer)))
+(define-derived-mode agent-review-mode special-mode "Agent Review"
+  "Major mode for offline branch reviews."
+  (setq-local truncate-lines t))
 
-(defvar-local agent-review--current-show-level 3)
+(defun agent-review--now ()
+  "Return the current UTC timestamp."
+  (format-time-string "%Y-%m-%dT%H:%M:%SZ" (current-time) t))
 
-(defun agent-review-increase-show-level ()
-  "Increase the level of showing sections in current buffer.
-Also see `magit-section-show-level'."
+(defun agent-review--property-at-point (property)
+  "Return PROPERTY around point."
+  (or (get-text-property (point) property)
+      (and (> (point) (point-min))
+           (get-text-property (1- (point)) property))))
+
+(defun agent-review--thread-summary (thread)
+  "Return a summary string for THREAD."
+  (let* ((anchor (alist-get 'anchor thread))
+         (messages (alist-get 'messages thread))
+         (latest (car (last messages))))
+    (format "[%s] %s:%s %s"
+            (alist-get 'state thread)
+            (alist-get 'path anchor)
+            (alist-get 'line anchor)
+            (replace-regexp-in-string
+             "\n+" " "
+             (or (alist-get 'body latest) "")))))
+
+(defun agent-review--goto-thread (thread-id)
+  "Move point to THREAD-ID if present."
+  (goto-char (point-min))
+  (let ((pos (text-property-any (point-min) (point-max)
+                                'agent-review-thread-id thread-id)))
+    (when pos
+      (goto-char pos)
+      (beginning-of-line)
+      t)))
+
+(defun agent-review--insert-thread-line (thread)
+  "Insert a summary line for THREAD."
+  (let ((start (point)))
+    (insert (agent-review--thread-summary thread) "\n")
+    (add-text-properties start (point)
+                         `(agent-review-thread-id ,(alist-get 'thread_id thread)
+                                                  mouse-face highlight))))
+
+(defun agent-review--parse-hunk-header (line)
+  "Return parsed line numbers for diff hunk LINE."
+  (when (string-match "^@@ -\\([0-9]+\\)\\(?:,[0-9]+\\)? +\\+\\([0-9]+\\)\\(?:,[0-9]+\\)? @@" line)
+    (list (string-to-number (match-string 1 line))
+          (string-to-number (match-string 2 line)))))
+
+(defun agent-review--make-anchor (review path side line diff-hunk)
+  "Build a thread anchor for REVIEW at PATH, SIDE, LINE and DIFF-HUNK."
+  `((base_commit . ,(agent-review-git-rev-parse
+                     (alist-get 'repo_root review)
+                     (alist-get 'base_ref review)))
+    (head_commit . ,(alist-get 'head_ref review))
+    (path . ,path)
+    (side . ,side)
+    (line . ,line)
+    (diff_hunk . ,diff-hunk)))
+
+(defun agent-review--insert-diff (review diff-text)
+  "Insert DIFF-TEXT for REVIEW and annotate diff lines."
+  (let ((path nil)
+        (old-line 0)
+        (new-line 0)
+        (diff-hunk nil))
+    (dolist (line (split-string diff-text "\n"))
+      (let ((start (point)))
+        (insert line "\n")
+        (cond
+         ((string-prefix-p "+++ b/" line)
+          (setq path (substring line 6)))
+         ((or (string-prefix-p "+++ /dev/null" line)
+              (string-prefix-p "--- /dev/null" line))
+          (setq path nil))
+         ((string-prefix-p "@@ " line)
+          (pcase-let ((`(,old ,new) (agent-review--parse-hunk-header line)))
+            (setq old-line old
+                  new-line new
+                  diff-hunk line)))
+         ((and path diff-hunk
+               (string-prefix-p "+" line)
+               (not (string-prefix-p "+++" line)))
+          (put-text-property start (1- (point)) 'agent-review-diff-anchor
+                             (agent-review--make-anchor review path "RIGHT" new-line diff-hunk))
+          (setq new-line (1+ new-line)))
+         ((and path diff-hunk
+               (string-prefix-p "-" line)
+               (not (string-prefix-p "---" line)))
+          (put-text-property start (1- (point)) 'agent-review-diff-anchor
+                             (agent-review--make-anchor review path "LEFT" old-line diff-hunk))
+          (setq old-line (1+ old-line)))
+         ((and path diff-hunk (string-prefix-p " " line))
+          (put-text-property start (1- (point)) 'agent-review-diff-anchor
+                             (agent-review--make-anchor review path "RIGHT" new-line diff-hunk))
+          (setq old-line (1+ old-line)
+                new-line (1+ new-line))))))))
+
+(defun agent-review--render ()
+  "Render the current review buffer."
+  (let* ((review agent-review--review)
+         (threads (alist-get 'threads review))
+         (open-count (cl-count "open" threads :key (lambda (thread) (alist-get 'state thread))
+                               :test #'equal))
+         (resolved-count (cl-count "resolved" threads
+                                   :key (lambda (thread) (alist-get 'state thread))
+                                   :test #'equal))
+         (inhibit-read-only t))
+    (erase-buffer)
+    (insert (format "Agent Review: %s\n" (alist-get 'branch review)))
+    (insert (format "Repo: %s\n" (alist-get 'repo_root review)))
+    (insert (format "Base: %s\n" (alist-get 'base_ref review)))
+    (insert (format "Head: %s\n" (alist-get 'head_ref review)))
+    (insert (format "Updated: %s\n\n" (alist-get 'updated_at review)))
+    (insert (format "Threads: open=%d resolved=%d\n" open-count resolved-count))
+    (if threads
+        (dolist (thread threads)
+          (agent-review--insert-thread-line thread))
+      (insert "No threads yet.\n"))
+    (insert "\nDiff:\n")
+    (if (string-empty-p agent-review--diff-text)
+        (insert "No changes.\n")
+      (agent-review--insert-diff review agent-review--diff-text))
+    (goto-char (point-min))))
+
+(defun agent-review--refresh-review-state (review)
+  "Refresh REVIEW with current git state."
+  (let* ((repo-root (alist-get 'repo_root review))
+         (base-ref (alist-get 'base_ref review))
+         (head-ref (agent-review-git-head-commit repo-root))
+         (head-commits (agent-review-git-commit-list repo-root base-ref)))
+    (setf (alist-get 'repo_root review) repo-root)
+    (setf (alist-get 'head_ref review) head-ref)
+    (setf (alist-get 'head_commits review) head-commits)
+    (setf (alist-get 'updated_at review) (agent-review--now))
+    review))
+
+(defun agent-review--persist-and-rerender (&optional thread-id)
+  "Persist current review and rerender, restoring THREAD-ID when possible."
+  (agent-review-store-write agent-review--review-file agent-review--review)
+  (setq agent-review--diff-text
+        (agent-review-git-unified-diff (alist-get 'repo_root agent-review--review)
+                                       (alist-get 'base_ref agent-review--review)))
+  (agent-review--render)
+  (when thread-id
+    (agent-review--goto-thread thread-id)))
+
+(defun agent-review-refresh ()
+  "Refresh the current review buffer."
   (interactive)
-  (when (< agent-review--current-show-level 4)
-    (setq agent-review--current-show-level (1+ agent-review--current-show-level)))
-  (magit-section-show-level (- agent-review--current-show-level)))
+  (unless agent-review--review-file
+    (user-error "No review is active in this buffer"))
+  (setq agent-review--review
+        (agent-review--refresh-review-state
+         (agent-review-store-read agent-review--review-file)))
+  (agent-review--persist-and-rerender))
 
-(defun agent-review-decrease-show-level ()
-  "Decrease the level of showing sections in current buffer.
-Also see `magit-section-show-level'."
-  (interactive)
-  (when (> agent-review--current-show-level 1)
-    (setq agent-review--current-show-level (1- agent-review--current-show-level)))
-  (magit-section-show-level (- agent-review--current-show-level)))
+(defun agent-review--prompt-existing-review-action (branch)
+  "Prompt for how to handle an existing review for BRANCH."
+  (completing-read
+   (format "Existing review for %s: " branch)
+   '("Continue" "Replace")
+   nil
+   t
+   nil
+   nil
+   "Continue"))
 
-(defun agent-review-maximize-show-level ()
-  "Set the level of showing sections to maximum in current buffer.
-Which means that all sections are expanded."
-  (interactive)
-  (setq agent-review--current-show-level 4)
-  (magit-section-show-level -4))
+(defun agent-review--create-review (repo-root branch &optional replaced)
+  "Create a fresh review in REPO-ROOT for BRANCH.
+When REPLACED is non-nil, tag the review as a replacement."
+  (let* ((base-ref (agent-review-git-prompt-base-ref repo-root))
+         (head-ref (agent-review-git-head-commit repo-root))
+         (head-commits (agent-review-git-commit-list repo-root base-ref))
+         (review (agent-review-store-create repo-root branch base-ref head-ref head-commits)))
+    (when replaced
+      (setf (alist-get 'events review)
+            `(((kind . "replaced")
+               (created_at . ,(agent-review--now))))))
+    review))
 
-(defun agent-review-minimize-show-level ()
-  "Set the level of showing sections to minimum in current buffer.
-Which means that all sections are collapsed."
-  (interactive)
-  (setq agent-review--current-show-level 1)
-  (magit-section-show-level -1))
+(defun agent-review--load-review (repo-root branch review-file)
+  "Load or create a review for REPO-ROOT, BRANCH and REVIEW-FILE."
+  (let ((review (if (file-exists-p review-file)
+                    (let ((action (agent-review--prompt-existing-review-action branch)))
+                      (if (equal action "Continue")
+                          (agent-review-store-read review-file)
+                        (agent-review--create-review repo-root branch t)))
+                  (agent-review--create-review repo-root branch nil))))
+    (setq review (agent-review--refresh-review-state review))
+    (agent-review-store-write review-file review)
+    review))
 
-(defun agent-review--eldoc-function (&rest _)
-  "Hook for `eldoc-documentation-function', return content at current point."
-  (get-text-property (point) 'agent-review-eldoc-content))
-
-(define-derived-mode agent-review-mode magit-section-mode "Agent Review"
-  :interactive nil
-  :group 'agent-review
-  (agent-review--mode-map-setup-for-evil)
-  (use-local-map agent-review-mode-map)
-  (setq-local font-lock-defaults nil)  ;; https://github.com/magit/magit/commit/7de0f1335f8c4954d6d07413c5ec19fc8200078c
-  (setq-local magit-hunk-section-map nil
-              magit-file-section-map nil
-              magit-diff-highlight-hunk-body nil)
-  (setq-local imenu-create-index-function #'magit--imenu-create-index
-              imenu-default-goto-function #'magit--imenu-goto-function
-              magit--imenu-item-types '(agent-review--review-section
-                                        agent-review--comment-section
-                                        agent-review--diff-section
-                                        agent-review--check-section
-                                        agent-review--commit-section
-                                        agent-review--description-section
-                                        agent-review--event-section))
-  (when agent-review-fringe-icons
-    (unless (and left-fringe-width (>= left-fringe-width 16))
-      (setq left-fringe-width 16)))
-  (add-to-list 'kill-buffer-query-functions 'agent-review--confirm-kill-buffer)
-  (add-hook 'eldoc-documentation-functions #'agent-review--eldoc-function nil t)
-  (eldoc-mode))
-
-(defun agent-review--refresh-internal ()
-  "Fetch and reload current Agent Review buffer."
-  (let* ((pr-info (agent-review--fetch-pr-info))
-         (pr-diff (let-alist pr-info
-                    (agent-review--fetch-compare-cached
-                     (or agent-review--selected-commit-base .baseRefOid)
-                     (or agent-review--selected-commit-head .headRefOid))))
-         section-id)
-    (setq-local agent-review--pr-info pr-info
-                mark-ring nil)
-    (when-let ((section (magit-current-section)))
-      (setq section-id (oref section value)))
-    (let ((inhibit-read-only t))
-      (erase-buffer)
-      (agent-review--insert-pr pr-info pr-diff)
-      (mapc (lambda (th) (agent-review--insert-in-diff-pending-review-thread
-                          th 'allow-fallback))
-            agent-review--pending-review-threads))
-    (if section-id
-        (agent-review--goto-section-with-value section-id)
-      (goto-char (point-min)))
-    (magit-map-sections 'magit-section-maybe-update-visibility-indicator)
-    (apply #'message "PR %s/%s/%s loaded" agent-review--pr-path)))
-
-(defun agent-review-refresh (&optional clear-pending-reviews)
-  "Fetch and reload current Agent Review buffer.
-If CLEAR-PENDING-REVIEWS is not nil, delete pending reviews if any,
-otherwise, ask interactively."
-  (interactive)
-  (when (and agent-review--pending-review-threads
-             (or clear-pending-reviews
-                 (not (yes-or-no-p "Keep pending review threads (may not work if the changes are updated)? "))))
-    (setq-local agent-review--pending-review-threads nil))
-  (agent-review--refresh-internal))
+(defun agent-review--open-buffer (review-file review)
+  "Open a review buffer for REVIEW-FILE using REVIEW."
+  (let ((buffer (get-buffer-create
+                 (format "*agent-review:%s*" (alist-get 'branch review)))))
+    (with-current-buffer buffer
+      (agent-review-mode)
+      (setq agent-review--review-file review-file
+            agent-review--review review
+            agent-review--diff-text
+            (agent-review-git-unified-diff (alist-get 'repo_root review)
+                                           (alist-get 'base_ref review)))
+      (agent-review--render))
+    (pop-to-buffer buffer)
+    buffer))
 
 ;;;###autoload
-(defun agent-review-url-parse (url)
-  "Return pr path (repo-owner repo-name pr-id) for URL, or nil on error."
-  (when-let* ((url-parsed (url-generic-parse-url url))
-              (path (url-filename url-parsed)))
-    (when (and (member (url-type url-parsed) '("http" "https"))
-               (string-match (rx "/" (group (+ (any alphanumeric ?- ?_ ?.)))
-                                 "/" (group (+ (any alphanumeric ?- ?_ ?.)))
-                                 "/pull" (? "s") "/" (group (+ (any digit))))
-                             (url-filename url-parsed)))
-      (list (match-string 1 path)
-            (match-string 2 path)
-            (string-to-number (match-string 3 path))))))
+(defun agent-review ()
+  "Open an offline review for the current git branch."
+  (interactive)
+  (let* ((repo-root (agent-review-git-repo-root default-directory))
+         (branch (agent-review-git-current-branch repo-root))
+         (review-file (agent-review-store-review-file repo-root branch))
+         (review (agent-review--load-review repo-root branch review-file)))
+    (agent-review--open-buffer review-file review)))
 
-(defun agent-review--url-parse-anchor (url)
-  "Return anchor id for URL, or nil on error.
-Example: given pr url https://github.com/.../pull/123#discussion_r12345,
-return 12345 (as string).
-This is used to jump to specific section after opening the buffer."
-  (when-let ((fragment (cadr (split-string url "#"))))
-    (when (string-match (rx (group (+ (any digit)))) fragment)
-      (match-string 1 fragment))))
+(defun agent-review-context-comment ()
+  "Reply to the thread at point or create a new thread from the diff line at point."
+  (interactive)
+  (unless agent-review--review
+    (user-error "No review is active in this buffer"))
+  (let ((thread-id (agent-review--property-at-point 'agent-review-thread-id))
+        (anchor (agent-review--property-at-point 'agent-review-diff-anchor))
+        (author (or user-login-name user-real-login-name "user")))
+    (cond
+     (thread-id
+      (let ((body (read-string "Reply: ")))
+        (when (string-blank-p body)
+          (user-error "Reply cannot be empty"))
+        (setq agent-review--review
+              (agent-review-store-append-reply agent-review--review
+                                               thread-id body "human" author))
+        (agent-review--persist-and-rerender thread-id)))
+     (anchor
+      (let ((body (read-string "Comment: ")))
+        (when (string-blank-p body)
+          (user-error "Comment cannot be empty"))
+        (setq agent-review--review
+              (agent-review-store-add-thread agent-review--review anchor body "human" author))
+        (agent-review--persist-and-rerender
+         (alist-get 'thread_id (car (last (alist-get 'threads agent-review--review)))))))
+     (t
+      (user-error "Point is not on a thread or diff line")))))
 
-;;;###autoload
-(defun agent-review-open (repo-owner repo-name pr-id &optional new-window anchor last-read-time)
-  "Open review buffer for REPO-OWNER/REPO-NAME PR-ID (number).
-Open in current window if NEW-WINDOW is nil, in other window otherwise.
-ANCHOR is a database id that may be present in the url fragment
-of a github pr notification, if it's not nil, try to jump to specific
-location after open.
-LAST-READ-TIME is the time when the PR is last read (in ISO string,
-mostly from notification buffer),
-if it's not nil, newer comments will be highlighted,
-and it will jump to first unread comment if ANCHOR is nil."
-  (with-current-buffer (get-buffer-create (format "*agent-review %s/%s/%s*" repo-owner repo-name pr-id))
-    (unless (eq major-mode 'agent-review-mode)
-      (agent-review-mode))
-    (setq-local agent-review--pr-path (list repo-owner repo-name pr-id))
-    (let ((agent-review--last-read-time last-read-time))
-      (agent-review-refresh))
-    (unless (and anchor (agent-review-goto-database-id anchor))
-      (when-let ((m (text-property-search-forward 'agent-review-unread t t)))
-        (goto-char (prop-match-beginning m))))
-    (funcall (if new-window
-                 'switch-to-buffer-other-window
-               'switch-to-buffer)
-             (current-buffer))
-    ;; for some known reason, recenter only works reliably after a redisplay
-    (redisplay)
-    (recenter)))
-
-(defun agent-review--find-url-in-buffer ()
-  "Return a possible pr url in current buffer.
-It's used as the default value of `agent-review'."
-  (or
-   ;; url at point
-   (when-let ((url (thing-at-point 'url t)))
-     (when (agent-review-url-parse url)
-       url))
-   ;; find links in buffer. Useful in buffer with github notification emails
-   (when-let ((prop (text-property-search-forward
-                     'shr-url nil
-                     (lambda (_ val) (and val (agent-review-url-parse val))))))
-     (goto-char (prop-match-beginning prop))
-     (prop-match-value prop))))
-
-(defun agent-review--interactive-arg ()
-  "Return args for interactive call for `agent-review'."
-  (list
-   ;; url
-   (let* ((default-url (agent-review--find-url-in-buffer))
-          (default-pr-path (and default-url (agent-review-url-parse default-url)))
-          (input-url (read-string (concat "URL to review"
-                                          (when default-pr-path
-                                            (apply #'format " (default: %s/%s/%s)"
-                                                   default-pr-path))
-                                          ": "))))
-     (if (string-empty-p input-url)
-         (or default-url "")
-       input-url))
-   ;; new-window
-   current-prefix-arg))
-
-;;;###autoload
-(defun agent-review (url &optional new-window)
-  "Open Agent Review with URL (which is a link to a GitHub pull request).
-This is the main entrypoint of `agent-review'.
-If NEW-WINDOW is not nil, open it in a new window.
-When called interactively, user will be prompted to enter a PR url
-and new window will be used when called with prefix."
-  (interactive (agent-review--interactive-arg))
-  (let ((res (agent-review-url-parse url))
-        (anchor (agent-review--url-parse-anchor url)))
-    (if (not res)
-        (message "Cannot parse URL %s" url)
-      (apply #'agent-review-open (append res (list new-window anchor))))))
-
-;;;###autoload
-(defun agent-review-open-url (url &optional new-window &rest _)
-  "Open Agent Review with URL, in a new window if NEW-WINDOW is not nil.
-This function is the same as `agent-review',
-but it can be used in `browse-url-handlers' with `agent-review-url-parse'."
-  (agent-review url new-window))
-
+(defun agent-review-toggle-thread-state ()
+  "Toggle the thread state at point between open and resolved."
+  (interactive)
+  (unless agent-review--review
+    (user-error "No review is active in this buffer"))
+  (let ((thread-id (agent-review--property-at-point 'agent-review-thread-id)))
+    (unless thread-id
+      (user-error "Point is not on a thread"))
+    (let* ((thread (cl-find thread-id (alist-get 'threads agent-review--review)
+                            :key (lambda (item) (alist-get 'thread_id item))
+                            :test #'equal))
+           (next-state (if (equal (alist-get 'state thread) "resolved")
+                           "open"
+                         "resolved")))
+      (setq agent-review--review
+            (agent-review-store-set-thread-state agent-review--review thread-id next-state))
+      (agent-review--persist-and-rerender thread-id))))
 
 (provide 'agent-review)
 ;;; agent-review.el ends here
