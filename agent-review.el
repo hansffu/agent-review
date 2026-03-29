@@ -79,6 +79,16 @@
   "Face used for thread body summaries."
   :group 'agent-review)
 
+(defface agent-review-author-face
+  '((t :inherit font-lock-keyword-face))
+  "Face used for message author labels."
+  :group 'agent-review)
+
+(defface agent-review-timestamp-face
+  '((t :inherit italic))
+  "Face used for message timestamps."
+  :group 'agent-review)
+
 (defface agent-review-empty-state-face
   '((t :inherit shadow))
   "Face used for empty section placeholders."
@@ -360,6 +370,13 @@
      (when (and anchor-status (not (equal anchor-status "active")))
        (format " - %s" (upcase anchor-status))))))
 
+(defun agent-review--message-display-time (message)
+  "Return display timestamp for MESSAGE."
+  (let ((created-at (or (alist-get 'created_at message) "")))
+    (if (string-empty-p created-at)
+        ""
+      (agent-review--format-display-time created-at))))
+
 (defun agent-review--insert-inline-thread (thread)
   "Insert THREAD inline in the diff if its anchor is visible."
   (let* ((anchor (agent-review--thread-anchor thread))
@@ -385,13 +402,33 @@
                  'face 'font-lock-comment-face))
         (dolist (message messages)
           (let ((author (or (alist-get 'author_id message) "unknown"))
+                (timestamp (agent-review--message-display-time message))
                 (body (or (alist-get 'body message) "")))
-            (insert (propertize (format "  @%s: " author)
-                                'face 'agent-review-thread-location-face))
-            (let ((body-start (point)))
-              (insert (replace-regexp-in-string "\n" "\n      " body))
-              (add-face-text-property body-start (point) 'agent-review-thread-body-face))
+            (insert "  ")
+            (insert (propertize (format "@%s" author) 'face 'agent-review-author-face))
+            (unless (string-empty-p timestamp)
+              (insert " - ")
+              (insert (propertize timestamp 'face 'agent-review-timestamp-face)))
+            (insert "\n")
+            (agent-review-render-insert-markdown body 4 'agent-review-thread-body-face)
             (insert "\n")))
+        (insert "  ")
+        (insert-button
+         "Reply"
+         'face 'agent-review-meta-key-face
+         'action (lambda (button)
+                   (save-excursion
+                     (goto-char (button-start button))
+                     (call-interactively #'agent-review-context-comment))))
+        (insert "  ")
+        (insert-button
+         (if (equal (alist-get 'state thread) "resolved") "Unresolve" "Resolve")
+         'face 'agent-review-meta-key-face
+         'action (lambda (button)
+                   (save-excursion
+                     (goto-char (button-start button))
+                     (call-interactively #'agent-review-toggle-thread-state))))
+        (insert "\n")
         (insert "\n")
         (add-text-properties start (point)
                              `(agent-review-thread-id ,thread-id

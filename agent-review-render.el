@@ -74,6 +74,30 @@ If MARGIN is non-nil, indent each line by MARGIN spaces."
 If MARGIN is non-nil, indent each line by MARGIN spaces."
   (insert (agent-review-render--fontify body lang-mode margin)))
 
+(defun agent-review-render-insert-markdown (body &optional margin extra-face)
+  "Insert BODY as markdown with optional MARGIN and EXTRA-FACE.
+Falls back to plain text insertion when `gfm-mode' is unavailable."
+  (let ((start (point))
+        (text (or body "")))
+    (if (fboundp 'gfm-mode)
+        (condition-case nil
+            (agent-review-render--insert-fontified text 'gfm-mode margin)
+          (error
+           (when margin
+             (setq text
+                   (replace-regexp-in-string (rx bol) (make-string margin ?\s) text)))
+           (insert text)
+           (unless (or (string-empty-p text) (string-suffix-p "\n" text))
+             (insert "\n"))))
+      (when margin
+        (setq text
+              (replace-regexp-in-string (rx bol) (make-string margin ?\s) text)))
+      (insert text)
+      (unless (or (string-empty-p text) (string-suffix-p "\n" text))
+        (insert "\n")))
+    (when extra-face
+      (add-face-text-property start (point) extra-face))))
+
 (defun agent-review-render--line-side (line-beg)
   "Return review side for diff line at LINE-BEG."
   (pcase (char-after line-beg)
