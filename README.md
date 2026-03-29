@@ -4,6 +4,17 @@ Review local branch changes from Emacs.
 
 ![](images/overview.png)
 
+## Status
+
+This project is still a work in progress (WIP).
+
+It is a vibe-coded rewrite of `pr-review` to support local review of AI-generated code.
+
+## Credits
+
+`agent-review` builds on `pr-review` by Yikai Zhao.
+Original project: <https://github.com/blahgeek/emacs-pr-review>
+
 ## Install
 
 MELPA release pending. Load this package from a local checkout for now.
