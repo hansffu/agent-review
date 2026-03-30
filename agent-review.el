@@ -585,10 +585,11 @@
 
 (defun agent-review--sync-commit-cache (review repo-root)
   "Cache commit ids for REVIEW in REPO-ROOT."
-  (setq agent-review--base-commit
-        (agent-review-git-rev-parse repo-root (alist-get 'base_ref review))
-        agent-review--head-commit
-        (alist-get 'head_ref review)))
+  (let ((base-ref (alist-get 'base_ref review)))
+    (setq agent-review--base-commit
+          (when base-ref (agent-review-git-rev-parse repo-root base-ref))
+          agent-review--head-commit
+          (alist-get 'head_ref review))))
 
 (defun agent-review--make-anchor (path side line diff-hunk)
   "Build a thread anchor for PATH, SIDE, LINE and DIFF-HUNK."
@@ -812,6 +813,10 @@
         (current-anchor (alist-get 'current_anchor thread))
         (status (alist-get 'anchor_status thread)))
     (cond
+     ;; Uncommitted review threads (nil head_commit) are always stale
+     ((null (alist-get 'head_commit anchor))
+      (setq thread (agent-review--alist-delete thread 'current_anchor))
+      (agent-review--alist-set thread 'anchor_status "outdated"))
      ((and current-anchor
            (equal (alist-get 'head_commit current-anchor) current-head))
       (agent-review--alist-set
@@ -830,16 +835,19 @@
   "Refresh REVIEW with current git state from REPO-ROOT."
   (let* ((repo-root (or repo-root (alist-get 'repo_root review)))
          (base-ref (alist-get 'base_ref review))
-         (head-ref (agent-review-git-head-commit repo-root))
-         (head-commits (agent-review-git-commit-list repo-root base-ref)))
+         (uncommitted-p (equal (alist-get 'review_type review) "uncommitted")))
     (setf (alist-get 'repo_root review) repo-root)
-    (setf (alist-get 'head_ref review) head-ref)
-    (setf (alist-get 'head_commits review) head-commits)
+    (unless uncommitted-p
+      (let ((head-ref (agent-review-git-head-commit repo-root))
+            (head-commits (agent-review-git-commit-list repo-root base-ref)))
+        (setf (alist-get 'head_ref review) head-ref)
+        (setf (alist-get 'head_commits review) head-commits)))
     (setf (alist-get 'updated_at review) (agent-review--now))
-    (setf (alist-get 'threads review)
-          (mapcar (lambda (thread)
-                    (agent-review--recompute-thread-status thread head-ref))
-                  (alist-get 'threads review)))
+    (let ((head-ref (if uncommitted-p nil (alist-get 'head_ref review))))
+      (setf (alist-get 'threads review)
+            (mapcar (lambda (thread)
+                      (agent-review--recompute-thread-status thread head-ref))
+                    (alist-get 'threads review))))
     review))
 
 (defun agent-review--persist-and-rerender (&optional thread-id)

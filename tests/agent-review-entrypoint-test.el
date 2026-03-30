@@ -425,5 +425,28 @@
       (should (null (alist-get 'base_ref review)))
       (should (null (alist-get 'head_commits review))))))
 
+(ert-deftest agent-review-uncommitted-recompute-always-outdated ()
+  "Threads with nil head_commit should always be treated as outdated."
+  (let* ((thread `((thread_id . "t1")
+                   (state . "open")
+                   (anchor_status . "active")
+                   (anchor . ((base_commit . "abc123")
+                              (head_commit . nil)
+                              (path . "demo.txt")
+                              (side . "RIGHT")
+                              (line . 2)
+                              (diff_hunk . "@@ -1 +1,2 @@")))))
+         (result (agent-review--recompute-thread-status thread "def456")))
+    (should (equal "outdated" (alist-get 'anchor_status result)))))
+
+(ert-deftest agent-review-uncommitted-refresh-skips-head-update ()
+  "Refresh should not update head_ref or head_commits for uncommitted reviews."
+  (agent-review-test-with-temp-repo (repo)
+    (agent-review-test--write-file (expand-file-name "demo.txt" repo) "one\ntwo\nthree\n")
+    (let ((review (agent-review-store-create repo "feature/offline" nil nil nil "uncommitted")))
+      (setq review (agent-review--refresh-review-state review repo))
+      (should (null (alist-get 'head_ref review)))
+      (should (null (alist-get 'head_commits review))))))
+
 (provide 'agent-review-entrypoint-test)
 ;;; agent-review-entrypoint-test.el ends here
