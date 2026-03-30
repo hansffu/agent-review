@@ -1,0 +1,6 @@
+{
+  "name": "agent-review",
+  "description": "Offline code review for Emacs with AI agent follow-up",
+  "version": "0.1.0",
+  "author": { "name": "hansffu" }
+}

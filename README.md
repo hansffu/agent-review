@@ -49,6 +49,27 @@ Comments, replies, and thread state changes are persisted immediately.
 - `C-c C-s`: toggle the thread at point between `open` and `resolved`
 - `C-c C-m`: remap stale anchors against the current `base..HEAD` diff
 
+## Agent Skills
+
+Claude Code skills for agent-driven follow-up are in `skills/`.
+
+### agent-review-address
+
+Addresses open review threads using Claude.
+
+**Install via Claude Code plugin system:**
+
+```bash
+/plugin marketplace add https://github.com/hansffu/agent-review
+/plugin install agent-review-address@agent-review
+```
+
+Once installed, ask Claude to work on the review:
+
+> Address the review comments
+
+Claude will read the open threads, make the requested changes, and append replies to the review file.
+
 ## Workflow Notes
 
 - Start from the branch you want to review.
