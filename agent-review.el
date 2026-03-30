@@ -139,6 +139,63 @@
     map)
   "Keymap for `agent-review-mode'.")
 
+(defvar agent-review--mode-map-setup-for-evil-done nil)
+
+(defvar-local agent-review--current-show-level 3)
+
+(defun agent-review-increase-show-level ()
+  "Increase the level of showing sections in current buffer."
+  (interactive)
+  (when (< agent-review--current-show-level 4)
+    (setq agent-review--current-show-level (1+ agent-review--current-show-level)))
+  (magit-section-show-level (- agent-review--current-show-level)))
+
+(defun agent-review-decrease-show-level ()
+  "Decrease the level of showing sections in current buffer."
+  (interactive)
+  (when (> agent-review--current-show-level 1)
+    (setq agent-review--current-show-level (1- agent-review--current-show-level)))
+  (magit-section-show-level (- agent-review--current-show-level)))
+
+(defun agent-review-maximize-show-level ()
+  "Expand all sections in current buffer."
+  (interactive)
+  (setq agent-review--current-show-level 4)
+  (magit-section-show-level -4))
+
+(defun agent-review-minimize-show-level ()
+  "Collapse all sections in current buffer."
+  (interactive)
+  (setq agent-review--current-show-level 1)
+  (magit-section-show-level -1))
+
+(defun agent-review--mode-map-setup-for-evil ()
+  "Setup `agent-review-mode-map' bindings for evil mode (if loaded)."
+  (when (and (fboundp 'evil-define-key*)
+             (not agent-review--mode-map-setup-for-evil-done))
+    (setq agent-review--mode-map-setup-for-evil-done t)
+    (evil-define-key* '(normal motion) agent-review-mode-map
+      (kbd "g r") #'agent-review-refresh
+      (kbd "TAB") #'magit-section-toggle
+      (kbd "z a") #'magit-section-toggle
+      (kbd "z o") #'magit-section-show
+      (kbd "z O") #'magit-section-show-children
+      (kbd "z c") #'magit-section-hide
+      (kbd "z C") #'magit-section-hide-children
+      (kbd "z r") #'agent-review-increase-show-level
+      (kbd "z R") #'agent-review-maximize-show-level
+      (kbd "z m") #'agent-review-decrease-show-level
+      (kbd "z M") #'agent-review-minimize-show-level
+      (kbd "g h") #'magit-section-up
+      (kbd "C-j") #'magit-section-forward
+      (kbd "g j") #'magit-section-forward-sibling
+      (kbd "C-k") #'magit-section-backward
+      (kbd "g k") #'magit-section-backward-sibling
+      [remap evil-previous-line] #'evil-previous-visual-line
+      [remap evil-next-line] #'evil-next-visual-line
+      (kbd "C-o") #'pop-to-mark-command
+      (kbd "q") #'quit-window)))
+
 (defvar-local agent-review--review nil)
 (defvar-local agent-review--review-file nil)
 (defvar-local agent-review--diff-text nil)
@@ -155,6 +212,7 @@
 
 (define-derived-mode agent-review-mode magit-section-mode "Agent Review"
   "Major mode for offline branch reviews."
+  (agent-review--mode-map-setup-for-evil)
   (use-local-map agent-review-mode-map)
   (agent-review-render-setup-mode)
   (setq-local truncate-lines t))
@@ -938,7 +996,7 @@ When BASE-REF is \"uncommitted\", creates an uncommitted review."
                                            (alist-get 'base_ref review)))
       (agent-review--sync-commit-cache review (alist-get 'repo_root review))
       (agent-review--render))
-    (pop-to-buffer buffer)
+    (switch-to-buffer buffer)
     buffer))
 
 (defun agent-review--maybe-add-untracked (repo-root)
