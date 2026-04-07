@@ -1,0 +1,22 @@
+{
+  "name": "agent-review-marketplace",
+  "owner": {
+    "name": "hansffu"
+  },
+  "metadata": {
+    "description": "Skills for working with agent-review offline code reviews"
+  },
+  "plugins": [
+    {
+      "name": "agent-review",
+      "source": ".",
+      "description": "Offline code review for Emacs with AI agent follow-up",
+      "version": "0.1.0",
+      "author": {
+        "name": "hansffu"
+      },
+      "repository": "https://github.com/hansffu/agent-review",
+      "license": "MIT"
+    }
+  ]
+}

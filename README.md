@@ -57,11 +57,18 @@ Claude Code skills for agent-driven follow-up are in `skills/`.
 
 Addresses open review threads using Claude.
 
-**Install via Claude Code plugin system:**
+**Install via Claude Code:**
+
+```
+/plugin marketplace add hansffu/agent-review
+/plugin install agent-review@agent-review-marketplace
+```
+
+Or from bash:
 
 ```bash
-/plugin marketplace add https://github.com/hansffu/agent-review
-/plugin install agent-review-address@agent-review
+claude plugin marketplace add hansffu/agent-review
+claude plugin install agent-review@agent-review-marketplace
 ```
 
 Once installed, ask Claude to work on the review:
