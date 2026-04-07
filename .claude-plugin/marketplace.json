@@ -9,7 +9,7 @@
   "plugins": [
     {
       "name": "agent-review",
-      "source": ".",
+      "source": "./",
       "description": "Offline code review for Emacs with AI agent follow-up",
       "version": "0.1.0",
       "author": {
