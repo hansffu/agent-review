@@ -15,16 +15,53 @@
 
 (defvar agent-review-diff-font-lock-syntax 'hunk-also)
 
+(defcustom agent-review-use-delta t
+  "When non-nil, use delta for syntax highlighting in diffs.
+Requires the `delta' executable and the `xterm-color' package."
+  :type 'boolean
+  :group 'agent-review)
+
+(defcustom agent-review-delta-executable "delta"
+  "Path to the delta executable."
+  :type 'string
+  :group 'agent-review)
+
+(defcustom agent-review-delta-args
+  `("--max-line-distance" "0.6"
+    "--true-color" ,(if (and (fboundp 'xterm-color--support-truecolor)
+                             xterm-color--support-truecolor)
+                        "always" "never")
+    "--color-only" "--paging" "never"
+    "--dark" "--syntax-theme" "OneHalfDark")
+  "Arguments passed to delta for diff syntax highlighting."
+  :type '(repeat string)
+  :group 'agent-review)
+
 (defvar-local agent-review--diff-begin-point 0)
 (defvar-local agent-review--base-commit nil)
 (defvar-local agent-review--head-commit nil)
+
+(defvar agent-review--delta-faces-to-remap
+  '(magit-diff-context-highlight
+    magit-diff-added
+    magit-diff-added-highlight
+    magit-diff-removed
+    magit-diff-removed-highlight)
+  "Magit faces remapped to `default' when delta provides coloring.")
 
 (defun agent-review-render-setup-mode ()
   "Configure the current buffer for Magit-style review rendering."
   (setq-local font-lock-defaults nil)
   (setq-local magit-hunk-section-map nil
               magit-file-section-map nil
-              magit-diff-highlight-hunk-body nil))
+              magit-diff-highlight-hunk-body nil)
+  (when (and agent-review-use-delta
+             (executable-find agent-review-delta-executable))
+    (setq-local magit-diff-refine-hunk nil)
+    (setq-local face-remapping-alist
+                (append (mapcar (lambda (face) (cons face 'default))
+                                agent-review--delta-faces-to-remap)
+                        face-remapping-alist))))
 
 (defun agent-review-render--fontify (body lang-mode &optional margin)
   "Fontify BODY as LANG-MODE and return a propertized string.
@@ -168,15 +205,33 @@ Return non-nil on success."
     (goto-char (prop-match-beginning match))
     t))
 
+(defun agent-review-render--apply-delta (beg end)
+  "Pipe region BEG to END through delta and convert ANSI to overlays."
+  (require 'xterm-color)
+  (let ((inhibit-read-only t)
+        (buffer-read-only nil))
+    (apply #'call-process-region beg end
+           agent-review-delta-executable t t nil
+           agent-review-delta-args)
+    (save-restriction
+      (narrow-to-region beg (point))
+      (xterm-color-colorize-buffer 'use-overlays))))
+
 (defun agent-review-render-insert-diff (diff)
   "Insert pull request DIFF with Magit section washing."
   (let ((beg (point)))
     (setq-local agent-review--diff-begin-point beg)
     (if (not diff)
         (insert (propertize "Diff not available\n" 'face 'font-lock-warning-face))
-      (agent-review-render--insert-fontified diff 'diff-mode)
-      (goto-char beg)
-      (magit-wash-sequence (apply-partially #'magit-diff-wash-diff '())))
+      (let ((use-delta (and agent-review-use-delta
+                            (executable-find agent-review-delta-executable))))
+        (if use-delta
+            (progn
+              (insert diff)
+              (agent-review-render--apply-delta beg (point)))
+          (agent-review-render--insert-fontified diff 'diff-mode))
+        (goto-char beg)
+        (magit-wash-sequence (apply-partially #'magit-diff-wash-diff '()))))
 
     ;; Keep the same line tracking behavior as original pr-review.
     (goto-char beg)
