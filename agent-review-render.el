@@ -27,10 +27,8 @@ Requires the `delta' executable and the `xterm-color' package."
   :group 'agent-review)
 
 (defcustom agent-review-delta-args
-  `("--max-line-distance" "0.6"
-    "--true-color" ,(if (and (fboundp 'xterm-color--support-truecolor)
-                             xterm-color--support-truecolor)
-                        "always" "never")
+  '("--max-line-distance" "0.6"
+    "--true-color" "always"
     "--color-only" "--paging" "never"
     "--dark" "--syntax-theme" "OneHalfDark")
   "Arguments passed to delta for diff syntax highlighting."
