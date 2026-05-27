@@ -72,6 +72,46 @@
             (should (or (agent-review-test--face-contains-p face 'diff-added)
                         (agent-review-test--face-contains-p face 'diff-indicator-added)))))))))
 
+(ert-deftest agent-review-renders-binary-diff-before-text-hunk ()
+  (let ((agent-review-use-delta nil))
+    (with-temp-buffer
+      (agent-review-render-insert-diff
+       (concat
+        "diff --git a/foo.bin b/foo.bin\n"
+        "index 1111111..2222222 100644\n"
+        "Binary files a/foo.bin and b/foo.bin differ\n"
+        "diff --git a/demo.txt b/demo.txt\n"
+        "index 5626abf..f719efd 100644\n"
+        "--- a/demo.txt\n"
+        "+++ b/demo.txt\n"
+        "@@ -1 +1,2 @@\n"
+        " one\n"
+        "+two\n"))
+      (should (string-match-p "modified\\s-+a/foo.bin -> b/foo.bin (binary)"
+                              (buffer-string)))
+      (goto-char (point-min))
+      (search-forward "@@ -1 +1,2 @@")
+      (beginning-of-line)
+      (should (magit-hunk-section-p (magit-current-section))))))
+
+(ert-deftest agent-review-renders-deleted-file-diff ()
+  (let ((agent-review-use-delta nil))
+    (with-temp-buffer
+      (agent-review-render-insert-diff
+       (concat
+        "diff --git a/foo.txt b/foo.txt\n"
+        "deleted file mode 100644\n"
+        "index 1111111..0000000\n"
+        "--- a/foo.txt\n"
+        "+++ /dev/null\n"
+        "@@ -1 +0,0 @@\n"
+        "-one\n"))
+      (should (string-match-p "deleted\\s-+a/foo.txt" (buffer-string)))
+      (goto-char (point-min))
+      (search-forward "@@ -1 +0,0 @@")
+      (beginning-of-line)
+      (should (magit-hunk-section-p (magit-current-section))))))
+
 (ert-deftest agent-review-tab-toggles-diff-file-section ()
   (agent-review-test-with-temp-repo (repo)
     (let ((default-directory repo)
